@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retirement Monte Carlo Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a planner's workbench. Inputs stay pinned on the left, results read top-down: verdict, path of wealth, policy map, sequence risk, method. */
+:root {
+  color-scheme: light;
+  --plane: #eef1f5;
+  --surface: #fcfdfe;
+  --ink: #0e1420;
+  --ink-2: #4a5263;
+  --muted: #7a8293;
+  --grid: #e3e6ec;
+  --axis: #c3c8d2;
+  --border: rgba(14, 20, 32, 0.10);
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --band-outer: #cde2fb;
+  --band-inner: #86b6ef;
+  --band-line: #104281;
+  --heat: #1c5cab;
+  --good: #0ca30c; --good-ink: #006300;
+  --warn: #fab219; --warn-ink: #7a5200;
+  --crit: #d03b3b; --crit-ink: #a52828;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane: #0c0f14; --surface: #151a21; --ink: #eef1f6; --ink-2: #b7bfcc; --muted: #8a91a0;
+    --grid: #252b34; --axis: #3a414c; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --accent-ink: #86b6ef;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --band-outer: #1b3557; --band-inner: #2b5c98; --band-line: #9ec5f4;
+    --heat: #3987e5;
+    --good-ink: #2fc22f; --warn-ink: #fab219; --crit-ink: #ef7373;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane: #0c0f14; --surface: #151a21; --ink: #eef1f6; --ink-2: #b7bfcc; --muted: #8a91a0;
+  --grid: #252b34; --axis: #3a414c; --border: rgba(255,255,255,0.10);
+  --accent: #3987e5; --accent-ink: #86b6ef;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --band-outer: #1b3557; --band-inner: #2b5c98; --band-line: #9ec5f4;
+  --heat: #3987e5;
+  --good-ink: #2fc22f; --warn-ink: #fab219; --crit-ink: #ef7373;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--plane); color: var(--ink);
+  font: 15px/1.5 var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: 0.005em; }
+h1 { font-size: 26px; line-height: 1.15; }
+h2 { font-size: 19px; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+p { margin: 0; }
+a { color: var(--accent-ink); }
+
+.app { display: grid; grid-template-columns: 312px minmax(0, 1fr); gap: 20px; max-width: 1320px; margin: 0 auto; padding: 20px 20px 48px; align-items: start; }
+@media (max-width: 920px) { .app { grid-template-columns: 1fr; padding: 16px 16px 40px; } }
+
+/* Controls */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.controls { position: sticky; top: 16px; padding: 18px 18px 14px; display: flex; flex-direction: column; gap: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+@media (max-width: 920px) { .controls { position: static; max-height: none; } }
+.brand { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--grid); }
+.brand p { color: var(--ink-2); font-size: 13.5px; }
+.group { display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+label, .label { font-size: 13px; font-weight: 500; color: var(--ink); }
+.val { font-weight: 600; font-size: 14px; }
+.hint { font-size: 12px; color: var(--muted); }
+input[type=range] { width: 100%; accent-color: var(--accent); margin: 2px 0 0; }
+input[type=number], select {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--plane);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%;
+}
+input[type=number] { font-variant-numeric: tabular-nums; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--plane); border: 1px solid var(--border); border-radius: 7px; padding: 2px; gap: 2px; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { text-align: center; font-size: 13px; padding: 6px 4px; border-radius: 5px; cursor: pointer; color: var(--ink-2); font-weight: 500; }
+.seg input:checked + label { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 1px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid2 .field label { font-size: 12px; color: var(--ink-2); font-weight: 500; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
+.check input { accent-color: var(--accent); margin-top: 3px; }
+details.adv summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink-2); list-style: none; display: flex; justify-content: space-between; }
+details.adv summary::after { content: "+"; color: var(--muted); }
+details.adv[open] summary::after { content: "–"; }
+details.adv[open] summary { margin-bottom: 12px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Results */
+.results { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.card { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.card-head p { color: var(--ink-2); font-size: 13.5px; max-width: 70ch; }
+.insight { font-size: 14px; color: var(--ink); max-width: 75ch; border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; }
+
+.verdict { display: grid; grid-template-columns: minmax(240px, 1.3fr) repeat(3, minmax(150px, 1fr)); gap: 0; }
+@media (max-width: 1100px) { .verdict { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .verdict { grid-template-columns: 1fr; } }
+.tile { padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--grid); }
+.tile:last-child { border-right: 0; }
+@media (max-width: 1100px) { .tile { border-right: 0; border-bottom: 1px solid var(--grid); } }
+.tile .k { font-size: 12.5px; color: var(--ink-2); font-weight: 500; }
+.tile .v { font-family: var(--font-display); font-size: 30px; font-weight: 600; line-height: 1.1; }
+.tile.hero .v { font-size: 48px; }
+.tile .s { font-size: 12.5px; color: var(--muted); }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 2px 9px 2px 7px; border-radius: 999px; border: 1px solid currentColor; width: fit-content; }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pill.good { color: var(--good-ink); } .pill.warn { color: var(--warn-ink); } .pill.crit { color: var(--crit-ink); }
+
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.axis-label { fill: var(--muted); font-size: 11.5px; font-family: var(--font-body); }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); box-shadow: 0 4px 14px rgba(0,0,0,0.14); border-radius: 7px;
+  padding: 8px 10px; font-size: 12.5px; line-height: 1.45; min-width: 150px; opacity: 0; transition: opacity .08s; z-index: 5;
+}
+.tip b { font-weight: 600; }
+.tip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tip .row span:first-child { color: var(--ink-2); }
+.tip .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.legend i.line { height: 3px; border-radius: 2px; width: 16px; }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 1100px) { .two { grid-template-columns: 1fr; } }
+.sub { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* Heatmap */
+.heat-wrap { overflow-x: auto; }
+.heat { display: grid; grid-template-columns: 54px repeat(9, minmax(46px, 1fr)); gap: 2px; min-width: 500px; }
+.heat .hd { font-size: 12px; color: var(--muted); text-align: center; padding: 4px 0; }
+.heat .rl { font-size: 12px; color: var(--muted); text-align: right; padding-right: 8px; display: flex; align-items: center; justify-content: flex-end; }
+.heat button {
+  font: inherit; font-size: 12.5px; font-weight: 500; border: 0; border-radius: 3px; height: 32px; cursor: pointer;
+  color: var(--ink); font-variant-numeric: tabular-nums; position: relative;
+}
+.heat button.hi { color: #fff; }
+.heat button:hover { outline: 2px solid var(--ink-2); outline-offset: -2px; }
+.heat button.cur { outline: 2.5px solid var(--ink); outline-offset: -1px; z-index: 1; }
+.heat-axis { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.ramp { display: flex; align-items: center; gap: 8px; }
+.ramp i { width: 140px; height: 10px; border-radius: 3px; background: linear-gradient(90deg, color-mix(in srgb, var(--heat) 4%, var(--surface)), var(--heat)); border: 1px solid var(--border); }
+.status { font-size: 12px; color: var(--muted); min-height: 18px; }
+
+/* Method */
+.method { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px 28px; }
+.method div { display: flex; flex-direction: column; gap: 6px; }
+.method p, .method li { font-size: 13.5px; color: var(--ink-2); max-width: 62ch; }
+.method ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+table.data { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+table.data th, table.data td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { color: var(--ink-2); font-weight: 500; }
+details.tbl summary { cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
+details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
+@media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel controls" aria-label="Simulation inputs">
+    <div class="brand">
+      <h1>Retirement Monte Carlo</h1>
+      <p>How likely is a portfolio to fund every year of retirement? Change any input and thousands of retirements re-run instantly.</p>
+    </div>
+
+    <div class="group">
+      <h3>Plan</h3>
+      <div class="field">
+        <label for="start">Starting portfolio ($)</label>
+        <input type="number" id="start" value="1000000" min="10000" step="10000">
+      </div>
+      <div class="field">
+        <div class="field-row"><label for="rate">Initial withdrawal rate</label><span class="val" id="rateOut"></span></div>
+        <input type="range" id="rate" min="2" max="8" step="0.1" value="4">
+        <span class="hint" id="rateHint"></span>
+      </div>
+      <div class="field">
+        <div class="field-row"><label for="years">Retirement length</label><span class="val" id="yearsOut"></span></div>
+        <input type="range" id="years" min="15" max="45" step="1" value="30">
+      </div>
+      <div class="field">
+        <div class="field-row"><label for="stock">Stocks / bonds</label><span class="val" id="stockOut"></span></div>
+        <input type="range" id="stock" min="0" max="100" step="5" value="60">
+        <span class="hint">Rebalanced back to target every year.</span>
+      </div>
+      <div class="field">
+        <span class="label" id="ruleLbl">Withdrawal rule</span>
+        <div class="seg" role="radiogroup" aria-labelledby="ruleLbl">
+          <input type="radio" name="rule" id="ruleFixed" value="fixed" checked><label for="ruleFixed">Fixed real</label>
+          <input type="radio" name="rule" id="ruleGuard" value="guard"><label for="ruleGuard">Guardrails</label>
+        </div>
+        <span class="hint" id="ruleHint"></span>
+      </div>
+      <div class="field">
+        <div class="field-row"><label for="fee">Annual fees</label><span class="val" id="feeOut"></span></div>
+        <input type="range" id="fee" min="0" max="2" step="0.05" value="0.5">
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Return model</h3>
+      <div class="field">
+        <span class="label" id="modelLbl">Distribution</span>
+        <div class="seg" role="radiogroup" aria-labelledby="modelLbl">
+          <input type="radio" name="model" id="modelN" value="normal" checked><label for="modelN">Lognormal</label>
+          <input type="radio" name="model" id="modelT" value="t"><label for="modelT">Fat tails (t₅)</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="preset">Capital market assumptions</label>
+        <select id="preset">
+          <option value="hist">Long-run US-style</option>
+          <option value="low">Muted forward-looking</option>
+          <option value="custom">Custom</option>
+        </select>
+        <span class="hint">Annual real (after-inflation) returns. Illustrative assumptions, not forecasts.</span>
+      </div>
+      <div class="grid2">
+        <div class="field"><label for="ms">Stock mean %</label><input type="number" id="ms" step="0.1"></div>
+        <div class="field"><label for="ss">Stock st. dev. %</label><input type="number" id="ss" step="0.5" min="0"></div>
+        <div class="field"><label for="mb">Bond mean %</label><input type="number" id="mb" step="0.1"></div>
+        <div class="field"><label for="sb">Bond st. dev. %</label><input type="number" id="sb" step="0.5" min="0"></div>
+        <div class="field"><label for="rho">Correlation ρ</label><input type="number" id="rho" step="0.05" min="-0.95" max="0.95"></div>
+      </div>
+    </div>
+
+    <details class="adv">
+      <summary>Simulation settings</summary>
+      <div class="group">
+        <div class="field">
+          <label for="nsim">Number of simulated retirements</label>
+          <select id="nsim">
+            <option value="1000">1,000</option>
+            <option value="5000">5,000</option>
+            <option value="10000" selected>10,000</option>
+            <option value="25000">25,000</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="seed">Random seed</label>
+          <input type="number" id="seed" value="3044" step="1">
+          <span class="hint">Same seed, same paths. Change it to see sampling noise.</span>
+        </div>
+        <label class="check"><input type="checkbox" id="anti"> <span>Antithetic variates: pair each path with its mirror image (−z) to reduce variance.</span></label>
+      </div>
+    </details>
+  </aside>
+
+  <main class="results">
+    <section class="panel verdict" aria-label="Summary">
+      <div class="tile hero">
+        <span class="k">Probability the money lasts</span>
+        <span class="v" id="tSucc">–</span>
+        <span class="pill" id="tPill">–</span>
+        <span class="s" id="tSuccSub"></span>
+      </div>
+      <div class="tile">
+        <span class="k">Median ending balance</span>
+        <span class="v" id="tMed">–</span>
+        <span class="s" id="tMedSub">in today’s dollars</span>
+      </div>
+      <div class="tile">
+        <span class="k">Bad-case ending balance</span>
+        <span class="v" id="tP10">–</span>
+        <span class="s">10th percentile, today’s dollars</span>
+      </div>
+      <div class="tile">
+        <span class="k" id="t4k">When it fails</span>
+        <span class="v" id="t4v">–</span>
+        <span class="s" id="t4s"></span>
+      </div>
+    </section>
+
+    <section class="panel card">
+      <div class="card-head">
+        <h2>Range of portfolio paths</h2>
+        <div class="legend">
+          <span><i style="background:var(--band-outer)"></i>10th–90th percentile</span>
+          <span><i style="background:var(--band-inner)"></i>25th–75th</span>
+          <span><i class="line" style="background:var(--band-line)"></i>Median</span>
+        </div>
+      </div>
+      <div class="chart" id="fan"></div>
+      <p class="insight" id="fanInsight"></p>
+      <details class="tbl"><summary>Show as table</summary><div class="scroll" id="fanTable"></div></details>
+    </section>
+
+    <section class="panel card">
+      <div class="card-head">
+        <h2>Success by withdrawal rate and stock allocation</h2>
+        <p>Every cell runs the same set of return paths (common random numbers), so differences between cells come from the policy, not from sampling noise. Click a cell to load it.</p>
+      </div>
+      <div class="heat-wrap"><div class="heat" id="heat" role="grid" aria-label="Success probability heatmap"></div></div>
+      <div class="heat-axis">
+        <span>Rows: share in stocks. Columns: initial withdrawal rate.</span>
+        <span class="ramp">0%<i></i>100% success</span>
+      </div>
+      <div class="status" id="heatStatus"></div>
+    </section>
+
+    <section class="panel card">
+      <div class="card-head">
+        <h2>Sequence-of-returns risk</h2>
+        <p>Two retirees can earn the same average return and get opposite outcomes. What matters is when the bad years arrive.</p>
+      </div>
+      <div class="two">
+        <div class="sub">
+          <h3>Same returns, different order</h3>
+          <div class="legend" id="seqLegend">
+            <span><i class="line" style="background:var(--s2)"></i>Worst years first</span>
+            <span><i class="line" style="background:var(--s1)"></i>Simulated order</span>
+            <span><i class="line" style="background:var(--s3)"></i>Best years first</span>
+          </div>
+          <div class="chart" id="seq"></div>
+          <p class="insight" id="seqInsight"></p>
+        </div>
+        <div class="sub">
+          <h3>Success rate by when returns happen</h3>
+          <div class="legend">
+            <span><i style="background:var(--s1)"></i><span id="lgAText">Grouped by first-decade return</span></span>
+            <span><i style="background:var(--s2)"></i><span id="lgBText">Grouped by final-decade return</span></span>
+          </div>
+          <div class="chart" id="quint"></div>
+          <p class="insight" id="quintInsight"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel card">
+      <h2>How the model works</h2>
+      <div class="method">
+        <div>
+          <h3>Returns</h3>
+          <p>Each simulated year draws real stock and bond returns. In lognormal mode, log-returns are bivariate normal, calibrated so arithmetic means and standard deviations match the inputs, and correlated through a Cholesky factor: <span class="mono">z<sub>b</sub> = ρz<sub>s</sub> + √(1−ρ²)·z₂</span>. Fat-tail mode uses a multivariate Student-t with 5 degrees of freedom, rescaled to the same mean and variance, so crashes are more frequent at equal volatility.</p>
+        </div>
+        <div>
+          <h3>Spending</h3>
+          <p>Withdrawals come out at the start of each year in today’s dollars, so the fixed rule is the inflation-adjusted “4% rule” framing. A path fails in the first year the balance cannot cover that year’s withdrawal. Guardrails follow a simplified Guyton–Klinger rule: if the current withdrawal rate drifts 20% above the starting rate, spending is cut 10% (skipped in the final 15 years); if it drifts 20% below, spending rises 10%.</p>
+        </div>
+        <div>
+          <h3>Estimation</h3>
+          <p>Success probability is <span class="mono">p̂ = successes ⁄ N</span>, with standard error <span class="mono">√(p̂(1−p̂)⁄N)</span> and a 95% interval of ±1.96 SE. With antithetic variates on, the SE comes from the variance of pair averages over N⁄2 pairs. A seeded generator (Mulberry32 with Box–Muller normals) makes every run reproducible.</p>
+        </div>
+        <div>
+          <h3>Not modeled</h3>
+          <ul>
+            <li>Taxes, Social Security, pensions and annuity income</li>
+            <li>Mortality: the horizon is fixed, not a life expectancy</li>
+            <li>Mean reversion, regimes and inflation shocks: years are independent and identically distributed</li>
+            <li>Spending changes over retirement beyond the guardrail rule</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+
+  const PRESETS = {
+    hist: { ms: 8.0, ss: 19, mb: 2.5, sb: 8, rho: 0.10 },
+    low:  { ms: 5.5, ss: 17, mb: 1.5, sb: 6, rho: 0.20 }
+  };
+
+  // ---------- random numbers ----------
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function makeNormal(rng) {
+    let spare = null;
+    return function () {
+      if (spare !== null) { const s = spare; spare = null; return s; }
+      let u = 0; while (u === 0) u = rng();
+      const v = rng(), r = Math.sqrt(-2 * Math.log(u));
+      spare = r * Math.sin(2 * Math.PI * v);
+      return r * Math.cos(2 * Math.PI * v);
+    };
+  }
+
+  // ---------- formatting ----------
+  function money(v) {
+    const a = Math.abs(v);
+    if (a >= 1e6) return "$" + (v / 1e6).toFixed(a >= 1e7 ? 1 : 2) + "M";
+    if (a >= 1e3) return "$" + Math.round(v / 1e3) + "k";
+    return "$" + Math.round(v);
+  }
+  const moneyFull = (v) => "$" + Math.round(v).toLocaleString("en-US");
+  const pct = (p, d = 1) => (p * 100).toFixed(d) + "%";
+  function niceStep(max, n) {
+    if (max <= 0) return 1;
+    const raw = max / n, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+  }
+
+  // ---------- inputs ----------
+  function readCfg() {
+    const num = (id, d) => { const v = parseFloat($(id).value); return isFinite(v) ? v : d; };
+    return {
+      S: Math.max(1000, num("start", 1e6)),
+      rate: num("rate", 4) / 100,
+      T: Math.round(num("years", 30)),
+      stock: num("stock", 60),
+      rule: document.querySelector('input[name=rule]:checked').value,
+      fee: num("fee", 0.5) / 100,
+      model: document.querySelector('input[name=model]:checked').value,
+      ms: num("ms", 8) / 100, ss: Math.max(0, num("ss", 19)) / 100,
+      mb: num("mb", 2.5) / 100, sb: Math.max(0, num("sb", 8)) / 100,
+      rho: Math.max(-0.95, Math.min(0.95, num("rho", 0.1))),
+      N: parseInt($("nsim").value, 10),
+      seed: Math.round(num("seed", 3044)),
+      anti: $("anti").checked
+    };
+  }
+
+  // ---------- return generation (cached; common random numbers) ----------
+  let cache = { key: null };
+  function getReturns(c) {
+    const key = [c.N, c.T, c.seed, c.model, c.ms, c.ss, c.mb, c.sb, c.rho, c.anti].join("|");
+    if (cache.key === key) return cache;
+    const { N, T } = c;
+    const Rs = new Float64Array(N * T), Rb = new Float64Array(N * T);
+    const nrm = makeNormal(mulberry32(c.seed));
+    const lsS = Math.sqrt(Math.log(1 + (c.ss * c.ss) / ((1 + c.ms) ** 2))), lmS = Math.log(1 + c.ms) - lsS * lsS / 2;
+    const lsB = Math.sqrt(Math.log(1 + (c.sb * c.sb) / ((1 + c.mb) ** 2))), lmB = Math.log(1 + c.mb) - lsB * lsB / 2;
+    const rc = Math.sqrt(1 - c.rho * c.rho), nu = 5, isT = c.model === "t";
+    const step = c.anti ? 2 : 1;
+    for (let i = 0; i < N; i += step) {
+      for (let t = 0; t < T; t++) {
+        const z1 = nrm(), z2 = nrm();
+        let k = 1;
+        if (isT) { let ch = 0; for (let j = 0; j < nu; j++) { const g = nrm(); ch += g * g; } k = Math.sqrt((nu - 2) / ch); }
+        for (let a = 0; a < step && i + a < N; a++) {
+          const sg = a ? -1 : 1;
+          const e1 = sg * z1 * k, e2 = sg * (c.rho * z1 + rc * z2) * k;
+          const idx = (i + a) * T + t;
+          if (isT) { Rs[idx] = Math.max(-0.95, c.ms + c.ss * e1); Rb[idx] = Math.max(-0.95, c.mb + c.sb * e2); }
+          else { Rs[idx] = Math.exp(lmS + lsS * e1) - 1; Rb[idx] = Math.exp(lmB + lsB * e2) - 1; }
+        }
+      }
+    }
+    cache = { key, Rs, Rb, N, T };
+    return cache;
+  }
+
+  // ---------- one retirement path ----------
+  const OUT = { fail: 0, B: 0, minW: 0, cut: 0 };
+  function runPath(Rs, Rb, off, T, w, fee, rate, guard, bal, boff) {
+    let B = 1, W = rate, minW = rate, cut = 0, fail = 0;
+    if (bal) bal[boff] = 1;
+    for (let t = 0; t < T; t++) {
+      if (guard && t > 0 && B > 0) {
+        const cwr = W / B;
+        if (cwr > rate * 1.2 && T - t > 15) { W *= 0.9; cut = 1; }
+        else if (cwr < rate * 0.8) W *= 1.1;
+        if (W < minW) minW = W;
+      }
+      if (B < W) {
+        fail = t + 1; B = 0;
+        if (bal) for (let u = t + 1; u <= T; u++) bal[boff + u] = 0;
+        break;
+      }
+      const r = w * Rs[off + t] + (1 - w) * Rb[off + t] - fee;
+      B = (B - W) * (1 + r);
+      if (bal) bal[boff + t + 1] = B;
+    }
+    OUT.fail = fail; OUT.B = B; OUT.minW = minW; OUT.cut = cut;
+  }
+
+  function seStats(okArr, N, anti) {
+    let s = 0; for (let i = 0; i < N; i++) s += okArr[i];
+    const p = s / N;
+    let se;
+    if (anti) {
+      const M = N / 2; let ss = 0;
+      for (let k = 0; k < M; k++) { const m = (okArr[2 * k] + okArr[2 * k + 1]) / 2; ss += (m - p) * (m - p); }
+      se = Math.sqrt(ss / (M - 1) / M);
+    } else se = Math.sqrt(p * (1 - p) / N);
+    return { p, se, naive: Math.sqrt(p * (1 - p) / N) };
+  }
+
+  function quantileSorted(a, q) { return a[Math.min(a.length - 1, Math.max(0, Math.floor(q * (a.length - 1))))]; }
+
+  // ---------- main simulation ----------
+  function simulate(c, R) {
+    const { N, T } = c, w = c.stock / 100, guard = c.rule === "guard";
+    const bal = new Float64Array(N * (T + 1)), ok = new Uint8Array(N), fails = [], endB = new Float64Array(N);
+    const minW = new Float64Array(N); let cuts = 0;
+    for (let i = 0; i < N; i++) {
+      runPath(R.Rs, R.Rb, i * T, T, w, c.fee, c.rate, guard, bal, i * (T + 1));
+      ok[i] = OUT.fail ? 0 : 1; if (OUT.fail) fails.push(OUT.fail);
+      endB[i] = OUT.B; minW[i] = OUT.minW; cuts += OUT.cut;
+    }
+    const st = seStats(ok, N, c.anti);
+    // percentiles by year
+    const qs = [0.1, 0.25, 0.5, 0.75, 0.9];
+    const pcts = qs.map(() => new Float64Array(T + 1));
+    const tmp = new Float64Array(N);
+    for (let t = 0; t <= T; t++) {
+      for (let i = 0; i < N; i++) tmp[i] = bal[i * (T + 1) + t];
+      tmp.sort();
+      qs.forEach((q, j) => { pcts[j][t] = quantileSorted(tmp, q); });
+    }
+    // fraction still funded after year t
+    const alive = new Float64Array(T + 1); alive[0] = 1;
+    const failCount = new Int32Array(T + 2); fails.forEach((f) => failCount[f]++);
+    let cum = 0; for (let t = 1; t <= T; t++) { cum += failCount[t]; alive[t] = 1 - cum / N; }
+    const endSorted = Float64Array.from(endB).sort();
+    const failsSorted = fails.slice().sort((a, b) => a - b);
+    const minWSorted = Float64Array.from(minW).sort();
+
+    // sequence risk: portfolio returns per path
+    const L = Math.min(10, Math.floor(T / 2));
+    const first = new Float64Array(N), last = new Float64Array(N), whole = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      let a = 0, b = 0, s = 0; const off = i * T;
+      for (let t = 0; t < T; t++) {
+        const lr = Math.log(Math.max(1e-9, 1 + w * R.Rs[off + t] + (1 - w) * R.Rb[off + t] - c.fee));
+        s += lr; if (t < L) a += lr; if (t >= T - L) b += lr;
+      }
+      first[i] = a / L; last[i] = b / L; whole[i] = s / T;
+    }
+    function quintiles(arr) {
+      const idx = Array.from({ length: N }, (_, i) => i).sort((x, y) => arr[x] - arr[y]);
+      const out = [];
+      for (let q = 0; q < 5; q++) {
+        const lo = Math.floor(q * N / 5), hi = Math.floor((q + 1) * N / 5);
+        let s = 0, rs = 0; for (let j = lo; j < hi; j++) { s += ok[idx[j]]; rs += arr[idx[j]]; }
+        out.push({ succ: s / (hi - lo), ret: Math.exp(rs / (hi - lo)) - 1 });
+      }
+      return out;
+    }
+    const qFirst = quintiles(first), qLast = quintiles(last);
+
+    // median-return path, reordered
+    const order = Array.from({ length: N }, (_, i) => i).sort((x, y) => whole[x] - whole[y]);
+    const mid = order[Math.floor(N / 2)];
+    const rets = []; for (let t = 0; t < T; t++) rets.push(w * R.Rs[mid * T + t] + (1 - w) * R.Rb[mid * T + t] - c.fee);
+    const variants = [rets.slice().sort((a, b) => a - b), rets.slice(), rets.slice().sort((a, b) => b - a)].map((r) => {
+      const arr = Float64Array.from(r), b = new Float64Array(T + 1);
+      runPath(arr, arr, 0, T, 1, 0, c.rate, guard, b, 0);
+      return { bal: b, fail: OUT.fail, end: OUT.B };
+    });
+
+    return { c, st, pcts, alive, endSorted, failsSorted, minWSorted, cuts, qFirst, qLast, L, variants, geo: Math.exp(whole[mid]) - 1 };
+  }
+
+  // ---------- tooltip helper ----------
+  function tipFor(container) {
+    let tip = container.querySelector(".tip");
+    if (!tip) { tip = document.createElement("div"); tip.className = "tip"; tip.setAttribute("role", "status"); container.appendChild(tip); }
+    return {
+      show(x, y, html) {
+        tip.innerHTML = html; tip.style.opacity = 1;
+        const cw = container.clientWidth, tw = tip.offsetWidth, th = tip.offsetHeight;
+        let left = x + 14; if (left + tw > cw) left = x - tw - 14; if (left < 0) left = 0;
+        let top = y - th / 2; if (top < 0) top = 0;
+        tip.style.left = left + "px"; tip.style.top = top + "px";
+      },
+      hide() { tip.style.opacity = 0; }
+    };
+  }
+
+  // ---------- fan chart ----------
+  function renderFan(res) {
+    const el = $("fan"), { c, pcts, alive } = res, T = c.T, S = c.S;
+    const W = Math.max(300, el.clientWidth), H = Math.round(Math.max(230, Math.min(340, W * 0.42)));
+    const m = { l: 58, r: 14, t: 10, b: 30 };
+    const dataMax = Math.max(...pcts[4]) * S;
+    const stepY = niceStep(dataMax, 4), yMax = Math.max(stepY, Math.ceil(dataMax / stepY) * stepY);
+    const x = (t) => m.l + (t / T) * (W - m.l - m.r);
+    const y = (v) => H - m.b - (v * S / yMax) * (H - m.t - m.b);
+    let g = "";
+    for (let v = 0; v <= yMax + 1e-6; v += stepY) {
+      const yy = H - m.b - (v / yMax) * (H - m.t - m.b);
+      g += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" stroke="${v === 0 ? "var(--axis)" : "var(--grid)"}" stroke-width="1"/>`;
+      g += `<text class="axis-label" x="${m.l - 8}" y="${yy + 4}" text-anchor="end">${money(v)}</text>`;
+    }
+    const xStep = T > 30 ? 10 : 5;
+    for (let t = 0; t <= T; t += xStep) g += `<text class="axis-label" x="${x(t)}" y="${H - m.b + 18}" text-anchor="middle">${t === 0 ? "Start" : "Yr " + t}</text>`;
+    const band = (lo, hi) => {
+      let d = ""; for (let t = 0; t <= T; t++) d += (t ? "L" : "M") + x(t).toFixed(1) + "," + y(hi[t]).toFixed(1);
+      for (let t = T; t >= 0; t--) d += "L" + x(t).toFixed(1) + "," + y(lo[t]).toFixed(1);
+      return d + "Z";
+    };
+    let med = ""; for (let t = 0; t <= T; t++) med += (t ? "L" : "M") + x(t).toFixed(1) + "," + y(pcts[2][t]).toFixed(1);
+    const startY = y(1);
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Percentile bands of real portfolio value by year">
+      ${g}
+      <path d="${band(pcts[0], pcts[4])}" fill="var(--band-outer)"/>
+      <path d="${band(pcts[1], pcts[3])}" fill="var(--band-inner)"/>
+      <line x1="${m.l}" x2="${W - m.r}" y1="${startY}" y2="${startY}" stroke="var(--ink-2)" stroke-width="1" stroke-dasharray="3 4" opacity="0.6"/>
+      <text class="axis-label" x="${m.l + 6}" y="${startY - 8}" text-anchor="start">Starting value</text>
+      <path d="${med}" fill="none" stroke="var(--band-line)" stroke-width="2" stroke-linejoin="round"/>
+      <line id="fanX" y1="${m.t}" y2="${H - m.b}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/>
+      <circle id="fanDot" r="4.5" fill="var(--band-line)" stroke="var(--surface)" stroke-width="2" opacity="0"/>
+      <rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent" id="fanHit"/>
+    </svg>`;
+    const tip = tipFor(el), hit = el.querySelector("#fanHit"), xl = el.querySelector("#fanX"), dot = el.querySelector("#fanDot");
+    const move = (ev) => {
+      const r = el.getBoundingClientRect(), sx = (ev.clientX - r.left) * (W / r.width);
+      const t = Math.max(0, Math.min(T, Math.round(((sx - m.l) / (W - m.l - m.r)) * T)));
+      const px = x(t);
+      xl.setAttribute("x1", px); xl.setAttribute("x2", px); xl.setAttribute("opacity", 0.5);
+      dot.setAttribute("cx", px); dot.setAttribute("cy", y(pcts[2][t])); dot.setAttribute("opacity", 1);
+      const row = (k, v) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
+      tip.show(px * (r.width / W), (y(pcts[2][t])) * (r.width / W),
+        `<div><b>${t === 0 ? "Start" : "End of year " + t}</b></div>` +
+        row("90th", money(pcts[4][t] * S)) + row("75th", money(pcts[3][t] * S)) + row("Median", money(pcts[2][t] * S)) +
+        row("25th", money(pcts[1][t] * S)) + row("10th", money(pcts[0][t] * S)) + row("Still funded", pct(alive[t])));
+    };
+    hit.addEventListener("pointermove", move);
+    hit.addEventListener("pointerleave", () => { tip.hide(); xl.setAttribute("opacity", 0); dot.setAttribute("opacity", 0); });
+
+    // table
+    let rows = "";
+    for (let t = 0; t <= T; t += 5) rows += `<tr><td>${t === 0 ? "Start" : "Year " + t}</td>${[0, 1, 2, 3, 4].map((j) => `<td>${moneyFull(pcts[j][t] * S)}</td>`).join("")}<td>${pct(alive[t])}</td></tr>`;
+    if (T % 5) rows += `<tr><td>Year ${T}</td>${[0, 1, 2, 3, 4].map((j) => `<td>${moneyFull(pcts[j][T] * S)}</td>`).join("")}<td>${pct(alive[T])}</td></tr>`;
+    $("fanTable").innerHTML = `<table class="data"><thead><tr><th>Year</th><th>10th</th><th>25th</th><th>Median</th><th>75th</th><th>90th</th><th>Still funded</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // ---------- sequence lines ----------
+  function renderSeq(res) {
+    const el = $("seq"), { c, variants } = res, T = c.T, S = c.S;
+    const W = Math.max(280, el.clientWidth), H = Math.round(Math.max(220, Math.min(290, W * 0.6)));
+    const m = { l: 54, r: 12, t: 10, b: 30 };
+    const dataMax = Math.max(...variants.map((v) => Math.max(...v.bal))) * S;
+    const stepY = niceStep(dataMax, 4), yMax = Math.max(stepY, Math.ceil(dataMax / stepY) * stepY);
+    const x = (t) => m.l + (t / T) * (W - m.l - m.r);
+    const y = (v) => H - m.b - (v * S / yMax) * (H - m.t - m.b);
+    let g = "";
+    for (let v = 0; v <= yMax + 1e-6; v += stepY) {
+      const yy = H - m.b - (v / yMax) * (H - m.t - m.b);
+      g += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" stroke="${v === 0 ? "var(--axis)" : "var(--grid)"}"/>`;
+      g += `<text class="axis-label" x="${m.l - 8}" y="${yy + 4}" text-anchor="end">${money(v)}</text>`;
+    }
+    const xStep = T > 30 ? 10 : 5;
+    for (let t = 0; t <= T; t += xStep) g += `<text class="axis-label" x="${x(t)}" y="${H - m.b + 18}" text-anchor="middle">${t === 0 ? "Start" : "Yr " + t}</text>`;
+    const cols = ["var(--s2)", "var(--s1)", "var(--s3)"];
+    let lines = "";
+    variants.forEach((v, k) => {
+      const end = v.fail ? v.fail : T;
+      let d = ""; for (let t = 0; t <= end; t++) d += (t ? "L" : "M") + x(t).toFixed(1) + "," + y(v.bal[t]).toFixed(1);
+      lines += `<path d="${d}" fill="none" stroke="${cols[k]}" stroke-width="2" stroke-linejoin="round"/>`;
+      if (v.fail) lines += `<circle cx="${x(v.fail)}" cy="${y(0)}" r="4.5" fill="${cols[k]}" stroke="var(--surface)" stroke-width="2"/>`;
+    });
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Three orderings of the same annual returns">
+      ${g}${lines}
+      <line id="seqX" y1="${m.t}" y2="${H - m.b}" stroke="var(--ink-2)" opacity="0"/>
+      <rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent" id="seqHit"/>
+    </svg>`;
+    const tip = tipFor(el), hit = el.querySelector("#seqHit"), xl = el.querySelector("#seqX");
+    const names = ["Worst first", "Simulated", "Best first"];
+    hit.addEventListener("pointermove", (ev) => {
+      const r = el.getBoundingClientRect(), sx = (ev.clientX - r.left) * (W / r.width);
+      const t = Math.max(0, Math.min(T, Math.round(((sx - m.l) / (W - m.l - m.r)) * T)));
+      xl.setAttribute("x1", x(t)); xl.setAttribute("x2", x(t)); xl.setAttribute("opacity", 0.5);
+      tip.show(x(t) * (r.width / W), (ev.clientY - r.top),
+        `<div><b>${t === 0 ? "Start" : "End of year " + t}</b></div>` +
+        variants.map((v, k) => `<div class="row"><span><i class="sw" style="background:${cols[k]}"></i>${names[k]}</span><b>${v.fail && t >= v.fail ? "Depleted" : money(v.bal[t] * S)}</b></div>`).join(""));
+    });
+    hit.addEventListener("pointerleave", () => { tip.hide(); xl.setAttribute("opacity", 0); });
+  }
+
+  // ---------- quintile bars ----------
+  function barPath(x, y, w, h, r) {
+    if (h <= 0.5) return `M${x},${y + h}H${x + w}`;
+    r = Math.min(r, w / 2, h);
+    return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+  }
+  function renderQuint(res) {
+    const el = $("quint"), { qFirst, qLast, L } = res;
+    const W = Math.max(280, el.clientWidth), H = Math.round(Math.max(220, Math.min(290, W * 0.6)));
+    const m = { l: 44, r: 8, t: 10, b: 44 };
+    const y = (p) => H - m.b - p * (H - m.t - m.b);
+    let g = "";
+    for (let p = 0; p <= 1.0001; p += 0.25) {
+      g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(p)}" y2="${y(p)}" stroke="${p === 0 ? "var(--axis)" : "var(--grid)"}"/>`;
+      g += `<text class="axis-label" x="${m.l - 8}" y="${y(p) + 4}" text-anchor="end">${Math.round(p * 100)}%</text>`;
+    }
+    const gw = (W - m.l - m.r) / 5, bw = Math.min(26, gw * 0.32), gap = 2;
+    const labels = ["Worst fifth", "2nd", "3rd", "4th", "Best fifth"];
+    let bars = "";
+    for (let q = 0; q < 5; q++) {
+      const cx = m.l + gw * q + gw / 2;
+      const xa = cx - bw - gap / 2, xb = cx + gap / 2;
+      bars += `<path class="qb" data-q="${q}" data-s="0" d="${barPath(xa, y(qFirst[q].succ), bw, y(0) - y(qFirst[q].succ), 4)}" fill="var(--s1)"/>`;
+      bars += `<path class="qb" data-q="${q}" data-s="1" d="${barPath(xb, y(qLast[q].succ), bw, y(0) - y(qLast[q].succ), 4)}" fill="var(--s2)"/>`;
+      bars += `<text class="axis-label" x="${cx}" y="${H - m.b + 17}" text-anchor="middle">${labels[q]}</text>`;
+      bars += `<rect class="qhit" data-q="${q}" x="${m.l + gw * q}" y="${m.t}" width="${gw}" height="${H - m.t - m.b}" fill="transparent"/>`;
+    }
+    // direct labels on the extremes of the first-decade series
+    [0, 4].forEach((q) => {
+      const cx = m.l + gw * q + gw / 2, xa = cx - bw - gap / 2;
+      bars += `<text x="${xa + bw / 2}" y="${y(qFirst[q].succ) - 6}" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">${Math.round(qFirst[q].succ * 100)}%</text>`;
+    });
+    bars += `<text class="axis-label" x="${(m.l + W - m.r) / 2}" y="${H - 6}" text-anchor="middle">Paths ranked by annualized return in that ${L}-year window</text>`;
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Success rate by return quintile">${g}${bars}</svg>`;
+    const tip = tipFor(el);
+    el.querySelectorAll(".qhit").forEach((h) => {
+      h.addEventListener("pointermove", (ev) => {
+        const q = +h.dataset.q, r = el.getBoundingClientRect();
+        el.querySelectorAll(".qb").forEach((b) => b.setAttribute("opacity", +b.dataset.q === q ? 1 : 0.45));
+        tip.show(ev.clientX - r.left, ev.clientY - r.top,
+          `<div><b>${labels[q]} of paths</b></div>` +
+          `<div class="row"><span><i class="sw" style="background:var(--s1)"></i>First ${L} yrs</span><b>${pct(qFirst[q].succ)}</b></div>` +
+          `<div class="row"><span style="padding-left:15px">avg return</span><span>${pct(qFirst[q].ret)}/yr</span></div>` +
+          `<div class="row"><span><i class="sw" style="background:var(--s2)"></i>Final ${L} yrs</span><b>${pct(qLast[q].succ)}</b></div>` +
+          `<div class="row"><span style="padding-left:15px">avg return</span><span>${pct(qLast[q].ret)}/yr</span></div>`);
+      });
+      h.addEventListener("pointerleave", () => { tip.hide(); el.querySelectorAll(".qb").forEach((b) => b.setAttribute("opacity", 1)); });
+    });
+  }
+
+  // ---------- summary ----------
+  function renderSummary(res) {
+    const { c, st, endSorted, failsSorted, minWSorted, cuts } = res, S = c.S, N = c.N;
+    $("tSucc").textContent = pct(st.p);
+    const pill = $("tPill");
+    if (st.p >= 0.85) { pill.className = "pill good"; pill.textContent = "Comfortable"; }
+    else if (st.p >= 0.70) { pill.className = "pill warn"; pill.textContent = "Watch closely"; }
+    else { pill.className = "pill crit"; pill.textContent = "At risk"; }
+    const lo = Math.max(0, st.p - 1.96 * st.se), hi = Math.min(1, st.p + 1.96 * st.se);
+    let sub = `95% CI ${pct(lo)}–${pct(hi)} · SE ${pct(st.se, 2)} over ${N.toLocaleString()} paths`;
+    if (c.anti && st.naive > 0) sub += ` · antithetic SE ${st.se < st.naive ? Math.round((1 - st.se / st.naive) * 100) + "% below" : "not below"} plain MC`;
+    $("tSuccSub").textContent = sub;
+    $("tMed").textContent = money(quantileSorted(endSorted, 0.5) * S);
+    $("tP10").textContent = money(quantileSorted(endSorted, 0.1) * S);
+    if (c.rule === "guard") {
+      $("t4k").textContent = "Lowest yearly income, median path";
+      $("t4v").textContent = pct(quantileSorted(minWSorted, 0.5) / c.rate, 0);
+      $("t4s").textContent = `of the starting ${money(c.rate * S)}/yr. ${pct(cuts / N, 0)} of paths hit the cut guardrail at least once (sometimes after earlier raises); 10th-percentile low point ${money(quantileSorted(minWSorted, 0.1) * S)}/yr.`;
+    } else {
+      $("t4k").textContent = "When it fails";
+      if (failsSorted.length) {
+        $("t4v").textContent = "Year " + quantileSorted(failsSorted, 0.5);
+        $("t4s").textContent = `median depletion year across the ${pct(failsSorted.length / N)} of paths that run out`;
+      } else { $("t4v").textContent = "Never"; $("t4s").textContent = "no simulated path ran out"; }
+    }
+  }
+
+  function renderInsights(res) {
+    const { c, pcts, alive, qFirst, qLast, L, variants, geo } = res, T = c.T, S = c.S;
+    const half = Math.round(T / 2);
+    $("fanInsight").textContent = `Halfway through (year ${half}), the median portfolio holds ${money(pcts[2][half] * S)} in today’s dollars and ${pct(alive[half])} of paths are still funded. ` + (pcts[0][T] > 0
+      ? `By year ${T}, 1 in 10 paths sits below ${money(pcts[0][T] * S)}.`
+      : `By year ${T}, ${pct(1 - alive[T])} of paths have run dry, which is why the bad-case ending balance is $0.`);
+    const [bad, , good] = variants;
+    const fate = (v) => v.fail ? `runs out in year ${v.fail}` : `ends with ${money(v.end * S)}`;
+    $("seqInsight").textContent = `All three lines earn the same ${pct(geo)} a year over ${T} years, taken from the simulated path with the median return. With the worst years first the portfolio ${fate(bad)}; with the best years first it ${fate(good)}.`;
+    const spreadA = qFirst[4].succ - qFirst[0].succ, spreadB = qLast[4].succ - qLast[0].succ;
+    $("lgAText").textContent = `Grouped by first ${L} years`;
+    $("lgBText").textContent = `Grouped by final ${L} years`;
+    $("quintInsight").textContent = `When the first ${L} years land in the worst fifth, ${pct(qFirst[0].succ, 0)} of portfolios last; in the best fifth, ${pct(qFirst[4].succ, 0)}. Ranking by the final ${L} years instead moves success by only ${Math.round(spreadB * 100)} points versus ${Math.round(spreadA * 100)}.`;
+  }
+
+  function renderStaticLabels(c) {
+    $("rateOut").textContent = (c.rate * 100).toFixed(1) + "%";
+    $("rateHint").textContent = `${moneyFull(c.rate * c.S)} in year one, in today’s dollars`;
+    $("yearsOut").textContent = c.T + " years";
+    $("stockOut").textContent = `${c.stock}% / ${100 - c.stock}%`;
+    $("feeOut").textContent = (c.fee * 100).toFixed(2) + "%";
+    $("ruleHint").textContent = c.rule === "guard"
+      ? "Spending flexes: cut 10% when the withdrawal rate runs 20% high, raise 10% when 20% low."
+      : "Same inflation-adjusted amount every year, whatever markets do.";
+  }
+
+  // ---------- heatmap ----------
+  const H_RATES = [2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5];
+  const H_STOCKS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0];
+  let heatCache = { key: null, vals: null, nh: 0 };
+  function computeHeat(c, R) {
+    const key = R.key + "|" + c.fee + "|" + c.rule;
+    if (heatCache.key === key) return heatCache;
+    const T = c.T, nh = Math.min(c.N, 10000), guard = c.rule === "guard";
+    const vals = H_STOCKS.map((s) => H_RATES.map((r) => {
+      let ok = 0; const w = s / 100, rate = r / 100;
+      for (let i = 0; i < nh; i++) { runPath(R.Rs, R.Rb, i * T, T, w, c.fee, rate, guard, null, 0); if (!OUT.fail) ok++; }
+      return ok / nh;
+    }));
+    heatCache = { key, vals, nh };
+    return heatCache;
+  }
+  function renderHeat(c, hc) {
+    const el = $("heat");
+    let html = `<div class="hd" aria-hidden="true"></div>` + H_RATES.map((r) => `<div class="hd">${r.toFixed(1)}%</div>`).join("");
+    H_STOCKS.forEach((s, i) => {
+      html += `<div class="rl">${s}%</div>`;
+      H_RATES.forEach((r, j) => {
+        const p = hc.vals[i][j], f = Math.max(4, Math.round(p * 100));
+        const cur = Math.abs(c.rate * 100 - r) < 1e-6 && c.stock === s;
+        html += `<button type="button" class="${f >= 72 ? "hi" : ""}${cur ? " cur" : ""}" style="background:color-mix(in srgb, var(--heat) ${f}%, var(--surface))" data-r="${r}" data-s="${s}" title="${s}% stocks, ${r.toFixed(1)}% withdrawal: ${pct(p)} success" aria-label="${s}% stocks, ${r.toFixed(1)}% withdrawal, ${pct(p)} success">${Math.round(p * 100)}</button>`;
+      });
+    });
+    el.innerHTML = html;
+    el.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+      $("rate").value = b.dataset.r; $("stock").value = b.dataset.s; schedule(0);
+    }));
+    $("heatStatus").textContent = c.N > hc.nh ? `Cells use the first ${hc.nh.toLocaleString()} paths to stay responsive; the headline figure uses all ${c.N.toLocaleString()}.` : "";
+  }
+
+  // ---------- orchestration ----------
+  let last = null, timer = null, heatTimer = null;
+  function run() {
+    const c = readCfg();
+    renderStaticLabels(c);
+    const R = getReturns(c);
+    const res = simulate(c, R);
+    last = res;
+    renderSummary(res); renderFan(res); renderSeq(res); renderQuint(res); renderInsights(res);
+    clearTimeout(heatTimer);
+    const needs = heatCache.key !== R.key + "|" + c.fee + "|" + c.rule;
+    if (needs) $("heatStatus").textContent = "Updating the grid…";
+    heatTimer = setTimeout(() => renderHeat(c, computeHeat(c, R)), needs ? 30 : 0);
+  }
+  function schedule(ms) { clearTimeout(timer); timer = setTimeout(run, ms === undefined ? 120 : ms); }
+
+  function applyPreset(k) {
+    const p = PRESETS[k]; if (!p) return;
+    $("ms").value = p.ms; $("ss").value = p.ss; $("mb").value = p.mb; $("sb").value = p.sb; $("rho").value = p.rho;
+  }
+  applyPreset("hist");
+  $("preset").addEventListener("change", (e) => { applyPreset(e.target.value); schedule(0); });
+  ["ms", "ss", "mb", "sb", "rho"].forEach((id) => $(id).addEventListener("input", () => { $("preset").value = "custom"; schedule(); }));
+  ["start", "rate", "years", "stock", "fee", "nsim", "seed", "anti"].forEach((id) => $(id).addEventListener("input", () => schedule()));
+  document.querySelectorAll('input[name=rule], input[name=model]').forEach((r) => r.addEventListener("change", () => schedule(0)));
+
+  let rw = 0;
+  new ResizeObserver(() => {
+    const w = $("fan").clientWidth;
+    if (last && Math.abs(w - rw) > 4) { rw = w; renderFan(last); renderSeq(last); renderQuint(last); }
+  }).observe(document.querySelector(".results"));
+
+  run();
+  rw = $("fan").clientWidth;
+})();
+</script>
+</body>
+</html>

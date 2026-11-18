@@ -1,0 +1,10 @@
+[project]
+name = "retirement-mc"
+version = "0.1.0"
+description = "Monte Carlo retirement planning simulator with Social Security, annuities and longevity risk"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "matplotlib>=3.7"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
