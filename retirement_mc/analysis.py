@@ -1,4 +1,5 @@
-"""Analyses built on the engine: policy grids, scenario comparisons and sequence risk."""
+"""Analyses built on the engine: policy grids, scenario comparisons, sequence risk,
+historical backtests."""
 
 from __future__ import annotations
 
@@ -6,24 +7,35 @@ from dataclasses import replace
 
 import numpy as np
 
+from .history import MarketHistory, load_us_history
 from .returns import generate_returns
 from .simulation import (
+    Estimate,
     RetirementPlan,
     SimulationConfig,
     SimulationResult,
+    estimate_mean,
+    lifespan_uniforms,
+    portfolio_returns_for,
     run_paths,
-    sample_lifespans,
     simulate,
 )
 
 
-def common_draws(plan: RetirementPlan, config: SimulationConfig):
-    """Generate one set of market paths and lifespans to share across plans (CRN)."""
+def common_draws(plans, config: SimulationConfig):
+    """One set of market paths and lifespan uniforms to share across plans (CRN).
+
+    Returns are generated for the *longest* plan; shorter plans use the first
+    columns. Lifespans are shared as uniforms, so plans with different
+    mortality tables or retirement ages still face matched longevity luck.
+    """
+    plans = list(plans) if not isinstance(plans, RetirementPlan) else [plans]
+    n_years = max(p.n_years for p in plans)
     returns = generate_returns(
-        config.market, config.n_paths, plan.n_years,
-        model=config.model, antithetic=config.antithetic, seed=config.seed,
+        config.market, config.n_paths, n_years, model=config.model,
+        antithetic=config.antithetic, seed=config.seed, block_size=config.block_size,
     )
-    return returns, sample_lifespans(plan, config)
+    return returns, lifespan_uniforms(config)
 
 
 def success_grid(
@@ -46,25 +58,40 @@ def success_grid(
     Returns:
         Array of shape ``(len(stock_shares), len(withdrawal_rates))``.
     """
-    returns, lifespans = common_draws(plan, config)
+    returns, u = common_draws(plan, config)
     grid = np.empty((len(stock_shares), len(withdrawal_rates)))
     for i, w in enumerate(stock_shares):
         for j, r in enumerate(withdrawal_rates):
             cell = replace(plan, stock_share=w, annual_spending=r * plan.initial_portfolio)
-            grid[i, j] = simulate(cell, config, returns, lifespans).success.mean()
+            grid[i, j] = simulate(cell, config, returns, uniforms=u).success.mean()
     return grid
 
 
 def compare_scenarios(
     plans: dict[str, RetirementPlan], config: SimulationConfig
 ) -> dict[str, SimulationResult]:
-    """Simulate several plans on the same market paths and lifespans (CRN).
+    """Simulate several plans on the same market paths and longevity draws (CRN).
 
-    All plans must share ``n_years`` (same horizon or same mortality settings).
+    Plans may differ in anything, including mortality assumptions, retirement
+    age and horizon: each plan converts the shared uniforms into lifespans with
+    its own survival curve and uses as many years of the shared returns as it needs.
     """
-    first = next(iter(plans.values()))
-    returns, lifespans = common_draws(first, config)
-    return {name: simulate(p, config, returns, lifespans) for name, p in plans.items()}
+    returns, u = common_draws(plans.values(), config)
+    return {name: simulate(p, config, returns, uniforms=u) for name, p in plans.items()}
+
+
+def paired_difference(a: SimulationResult, b: SimulationResult) -> Estimate:
+    """Estimate P(success | b) - P(success | a) from a CRN comparison.
+
+    Because both plans ran on the same paths, the per-path difference
+    d_i = success_b,i - success_a,i is the right quantity to average. Its
+    variance is Var(a) + Var(b) - 2 Cov(a, b), and CRN makes the covariance
+    large, so this interval is much tighter than comparing two independent runs.
+    """
+    if a.success.shape != b.success.shape:
+        raise ValueError("results must come from the same number of paths")
+    d = b.success.astype(float) - a.success.astype(float)
+    return estimate_mean(d, a.config.antithetic and b.config.antithetic)
 
 
 def sequence_quintiles(result: SimulationResult, window: int = 10) -> dict[str, list[dict]]:
@@ -119,4 +146,40 @@ def reorder_demo(result: SimulationResult) -> dict:
         "annualized_return": float(np.expm1(total[idx])),
         "balances": dict(zip(orders, out["balances"])),
         "fail_year": dict(zip(orders, out["fail_year"].tolist())),
+    }
+
+
+def historical_backtest(plan: RetirementPlan, history: MarketHistory | None = None,
+                        inflation: float | None = None) -> dict:
+    """Run the plan through every complete historical window (rolling start years).
+
+    For a 30-year plan and data for 1928-2025, that is 69 retirements starting
+    in 1928, 1929, ..., 1996. These windows overlap heavily, so they are far
+    from 69 independent observations: treat the result as a sanity check on the
+    simulation, not as a better estimate.
+
+    Returns:
+        Dict with the start years, success flags, ending balances and the
+        overall success rate.
+    """
+    if plan.mortality is not None:
+        raise ValueError("backtests use a fixed horizon; set mortality=None")
+    h = history or load_us_history()
+    n_years = plan.n_years
+    starts = h.years[: len(h.years) - n_years + 1]
+    if len(starts) == 0:
+        raise ValueError("not enough history for this horizon")
+    idx = np.arange(len(starts))[:, None] + np.arange(n_years)
+    port = portfolio_returns_for(plan, h.real_stock[idx], h.real_bond[idx])
+    infl = h.inflation.mean() if inflation is None else inflation
+    income = plan.income_schedule(infl)
+    out = run_paths(plan, port, np.full(len(starts), float(n_years)), income)
+    low = np.min(out["consumption"], axis=1) / plan.annual_spending if plan.annual_spending else np.ones(len(starts))
+    ok = (out["fail_year"] == 0) & (low >= plan.spending_floor - 1e-12)
+    return {
+        "start_years": starts,
+        "success": ok,
+        "fail_year": out["fail_year"],
+        "ending_balance": out["balances"][:, -1],
+        "success_rate": float(ok.mean()),
     }

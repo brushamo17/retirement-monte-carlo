@@ -15,17 +15,31 @@ One simulated year, for every path at once:
     4. Grow what is left: B <- (B - W) * (1 + r), where r is the portfolio's
        real return net of fees. The portfolio is rebalanced to its target mix
        every year, so r = w * r_stock + (1 - w) * r_bond - fee.
+
+What counts as success
+----------------------
+A retirement succeeds if, in every year the retiree is alive,
+
+    (a) that year's spending target was fully funded (no shortfall), and
+    (b) actual spending never fell below ``spending_floor`` x the original goal.
+
+Condition (b) matters for flexible spending rules. Guardrails avoid running
+out of money by cutting spending, so without (b) a retiree whose spending was
+cut to 60% of the plan would still count as a "success". The default floor is
+80%. Under the fixed rule spending only drops when money runs out, so (b) adds
+nothing beyond (a).
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from .income import Annuity, IncomeStream
 from .mortality import GompertzMortality
-from .returns import LONG_RUN_US, MarketAssumptions, generate_returns
+from .returns import HISTORICAL_US, MarketAssumptions, generate_returns
 
 # Guardrail parameters (a simplified Guyton-Klinger rule).
 UPPER_GUARDRAIL = 1.20      # cut when the withdrawal rate is 20% above its reference
@@ -34,6 +48,9 @@ CUT = 0.10                  # size of a spending cut
 RAISE = 0.10                # size of a spending raise
 NO_CUTS_FINAL_YEARS = 15    # Guyton-Klinger skip cuts late in retirement
 
+# If more than this share of lifespans outlive the simulation horizon, warn.
+BEYOND_HORIZON_WARNING = 0.001
+
 
 @dataclass(frozen=True)
 class RetirementPlan:
@@ -41,18 +58,23 @@ class RetirementPlan:
 
     Attributes:
         initial_portfolio: Investable assets at retirement, before any annuity purchase.
-        annual_spending: Total yearly spending need. Guaranteed income covers
+        annual_spending: Total yearly spending goal. Guaranteed income covers
             part of it; the portfolio covers the rest.
         stock_share: Fraction of the portfolio in stocks (the rest is bonds).
         fee: Annual fees as a fraction of assets (advisory + fund expenses).
         horizon_years: Length of retirement when ``mortality`` is None.
         rule: ``"fixed"`` (same real spending every year) or ``"guardrails"``.
+        spending_floor: Lowest acceptable spending, as a fraction of
+            ``annual_spending``. A path where spending drops below it in any
+            year lived counts as a failure even if every target was funded.
         income: Social Security, pensions and other income streams.
         annuities: Annuities bought with part of the portfolio at retirement.
         retirement_age: Age at the start of the simulation.
         mortality: If given, each path gets a random lifespan and success means
-            "the money lasted as long as the retiree did".
-        max_age: Last age simulated when ``mortality`` is used.
+            "spending was sustained as long as the retiree lived".
+        max_age: Last age simulated when ``mortality`` is used. The default of
+            115 leaves well under a 1-in-a-million chance of outliving the
+            horizon under the default Gompertz model.
     """
 
     initial_portfolio: float = 1_000_000.0
@@ -61,19 +83,26 @@ class RetirementPlan:
     fee: float = 0.005
     horizon_years: int = 30
     rule: str = "fixed"
+    spending_floor: float = 0.80
     income: tuple[IncomeStream, ...] = ()
     annuities: tuple[Annuity, ...] = ()
     retirement_age: int = 65
     mortality: GompertzMortality | None = None
-    max_age: int = 110
+    max_age: int = 115
 
     def __post_init__(self) -> None:
         if self.rule not in ("fixed", "guardrails"):
             raise ValueError("rule must be 'fixed' or 'guardrails'")
         if not 0.0 <= self.stock_share <= 1.0:
             raise ValueError("stock_share must be between 0 and 1")
+        if not 0.0 <= self.spending_floor <= 1.0:
+            raise ValueError("spending_floor must be between 0 and 1")
+        if self.initial_portfolio < 0 or self.annual_spending < 0:
+            raise ValueError("portfolio and spending must be non-negative")
         if self.invested_portfolio < 0:
             raise ValueError("annuity premiums exceed the starting portfolio")
+        if self.n_years < 1:
+            raise ValueError("the simulation needs at least one year")
 
     @property
     def n_years(self) -> int:
@@ -105,16 +134,18 @@ class SimulationConfig:
     Attributes:
         n_paths: Number of simulated retirements.
         seed: Random seed, for reproducibility.
-        model: ``"lognormal"`` or ``"t"`` (fat tails).
+        model: ``"lognormal"``, ``"fat_tailed"`` or ``"bootstrap"``.
         antithetic: Use antithetic variates (mirrored pairs of paths).
-        market: Capital market assumptions.
+        market: Capital market assumptions (default: calibrated to 1928-2025).
+        block_size: Years per block for the bootstrap model.
     """
 
     n_paths: int = 10_000
     seed: int = 3044
     model: str = "lognormal"
     antithetic: bool = False
-    market: MarketAssumptions = LONG_RUN_US
+    market: MarketAssumptions = HISTORICAL_US
+    block_size: int = 5
 
 
 @dataclass(frozen=True)
@@ -131,6 +162,31 @@ class Estimate:
         return f"{self.p:.1%} (95% CI {self.ci_low:.1%} to {self.ci_high:.1%}, SE {self.se:.2%})"
 
 
+def estimate_mean(x: np.ndarray, antithetic: bool = False) -> Estimate:
+    """Monte Carlo estimate of E[x] with SE and 95% CI.
+
+    Plain Monte Carlo: paths are i.i.d., so SE = sd(x) / sqrt(N). For a 0/1
+    indicator this is the familiar sqrt(p (1 - p) / N).
+
+    Antithetic variates: the two paths in a pair are *not* independent, so the
+    right unit is the pair. Average each pair and take the SE of those N/2 pair
+    averages. If mirrored paths are negatively correlated, the pair averages
+    vary less and the SE shrinks.
+
+    Works for indicators and for paired differences between two plans.
+    """
+    x = np.asarray(x, dtype=float)
+    n = x.size
+    p = float(x.mean())
+    se_plain = float(x.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
+    if antithetic:
+        pairs = x.reshape(-1, 2).mean(axis=1)
+        se = float(pairs.std(ddof=1) / np.sqrt(pairs.size))
+    else:
+        se = se_plain
+    return Estimate(p, se, p - 1.96 * se, p + 1.96 * se, se_plain)
+
+
 @dataclass
 class SimulationResult:
     """Outputs of a simulation run. Arrays are indexed ``[path, year]``.
@@ -139,8 +195,8 @@ class SimulationResult:
         balances: Portfolio value at the start of each year and at the end,
             shape ``(n_paths, n_years + 1)``. Column 0 is the starting value.
         consumption: What the household actually spent each year (income plus
-            withdrawal), shape ``(n_paths, n_years)``.
-        target: What it wanted to spend each year (changes under guardrails).
+            the withdrawal it could actually make), shape ``(n_paths, n_years)``.
+        target: What it planned to spend each year (changes under guardrails).
         fail_year: First year (1-based) with a shortfall while alive; 0 if never.
         lifespan: Years lived in retirement (equals the horizon if no mortality).
         portfolio_returns: Net real portfolio return per path and year.
@@ -165,9 +221,38 @@ class SimulationResult:
 
     # ---- basic outcomes -------------------------------------------------
     @property
-    def success(self) -> np.ndarray:
-        """True where spending was fully funded in every year the retiree was alive."""
+    def n_years(self) -> int:
+        return self.consumption.shape[1]
+
+    @property
+    def alive(self) -> np.ndarray:
+        """Boolean ``(n_paths, n_years)``: was the retiree alive in that year?"""
+        return np.arange(self.n_years)[None, :] < self.lifespan[:, None]
+
+    @property
+    def funded(self) -> np.ndarray:
+        """True where every year's spending target was met while alive."""
         return self.fail_year == 0
+
+    @property
+    def lowest_spending(self) -> np.ndarray:
+        """Lowest actual spending in any year lived, as a share of the original goal."""
+        if self.plan.annual_spending == 0:
+            return np.ones(self.lifespan.size)
+        low = np.where(self.alive, self.consumption, np.inf).min(axis=1)
+        return low / self.plan.annual_spending
+
+    @property
+    def success(self) -> np.ndarray:
+        """Funded every year *and* spending never fell below the plan's floor."""
+        return self.funded & (self.lowest_spending >= self.plan.spending_floor - 1e-12)
+
+    @property
+    def beyond_horizon(self) -> np.ndarray:
+        """True where the retiree outlived the simulated horizon (mortality runs only)."""
+        if self.plan.mortality is None:
+            return np.zeros(self.lifespan.size, dtype=bool)
+        return self.lifespan > self.n_years
 
     @property
     def years_lived(self) -> np.ndarray:
@@ -181,34 +266,14 @@ class SimulationResult:
 
     @property
     def shortfall_years(self) -> np.ndarray:
-        """Number of lived years in which consumption fell short of the target."""
-        n_years = self.consumption.shape[1]
-        alive = np.arange(n_years)[None, :] < self.lifespan[:, None]
+        """Number of lived years in which spending fell short of that year's target."""
         short = self.consumption < self.target * (1 - 1e-9)
-        return np.sum(short & alive, axis=1)
+        return np.sum(short & self.alive, axis=1)
 
     # ---- estimation -----------------------------------------------------
     def success_probability(self) -> Estimate:
-        """Estimate P(success) with a standard error and 95% confidence interval.
-
-        Plain Monte Carlo: each path is an independent Bernoulli trial, so
-            p_hat = mean(success),   SE = sqrt(p_hat (1 - p_hat) / N).
-
-        Antithetic variates: the two paths in a pair are *not* independent, so
-        the right unit is the pair. Average each pair, then take the SE of those
-        N/2 pair averages. If mirrored paths are negatively correlated, the pair
-        averages vary less and the SE shrinks.
-        """
-        x = self.success.astype(float)
-        n = x.size
-        p = float(x.mean())
-        se_plain = float(np.sqrt(p * (1 - p) / n))
-        if self.config.antithetic:
-            pairs = x.reshape(-1, 2).mean(axis=1)
-            se = float(pairs.std(ddof=1) / np.sqrt(pairs.size))
-        else:
-            se = se_plain
-        return Estimate(p, se, max(0.0, p - 1.96 * se), min(1.0, p + 1.96 * se), se_plain)
+        """Estimate P(success) with a standard error and 95% confidence interval."""
+        return estimate_mean(self.success, self.config.antithetic)
 
     def percentiles(self, qs=(10, 25, 50, 75, 90)) -> np.ndarray:
         """Balance percentiles by year, shape ``(len(qs), n_years + 1)``."""
@@ -217,25 +282,25 @@ class SimulationResult:
     def summary(self) -> dict:
         """Headline numbers for reports."""
         est = self.success_probability()
-        failed = ~self.success
-        spend0 = self.plan.annual_spending
-        n_years = self.consumption.shape[1]
-        alive = np.arange(n_years)[None, :] < self.lifespan[:, None]
-        # Lowest consumption while alive, as a share of the initial spending goal.
-        low = np.where(alive, self.consumption, np.inf).min(axis=1) / spend0
-        out = {
+        short = ~self.funded
+        low = self.lowest_spending
+        cut = np.any(self.alive & (self.target < self.plan.annual_spending * (1 - 1e-9)), axis=1)
+        return {
             "success": est.p,
             "se": est.se,
             "ci_low": est.ci_low,
             "ci_high": est.ci_high,
+            "funded": float(self.funded.mean()),
+            "p_any_cut": float(cut.mean()),
+            "p_below_floor": float((low < self.plan.spending_floor - 1e-12).mean()),
+            "median_lowest_spending": float(np.median(low)),
             "median_terminal": float(np.median(self.terminal_wealth)),
             "p10_terminal": float(np.percentile(self.terminal_wealth, 10)),
-            "median_fail_year": float(np.median(self.fail_year[failed])) if failed.any() else None,
-            "avg_shortfall_years_if_failed": float(self.shortfall_years[failed].mean()) if failed.any() else 0.0,
-            "median_floor_if_failed": float(np.median(low[failed])) if failed.any() else None,
-            "median_lowest_spending": float(np.median(low)),
+            "median_fail_year": float(np.median(self.fail_year[short])) if short.any() else None,
+            "avg_shortfall_years_if_short": float(self.shortfall_years[short].mean()) if short.any() else 0.0,
+            "median_floor_if_short": float(np.median(low[short])) if short.any() else None,
+            "share_beyond_horizon": float(self.beyond_horizon.mean()),
         }
-        return out
 
 
 # --------------------------------------------------------------------------
@@ -307,22 +372,30 @@ def portfolio_returns_for(plan: RetirementPlan, stock: np.ndarray, bond: np.ndar
     return w * stock + (1.0 - w) * bond - plan.fee
 
 
-def sample_lifespans(plan: RetirementPlan, config: SimulationConfig) -> np.ndarray:
-    """Years lived in retirement per path: random under mortality, otherwise the horizon.
+def lifespan_uniforms(config: SimulationConfig) -> np.ndarray:
+    """Uniform(0, 1) draws that drive lifespans, one per path.
 
-    Lifespans use their own random stream (seeded from ``(seed, 1)``) so that
-    turning mortality on or off never changes the market paths.
+    They come from their own stream, seeded from ``(seed, 1)``, so turning
+    mortality on or off never changes the market paths. Sharing the *uniforms*
+    (rather than the lifespans) across plans gives common random numbers even
+    when plans use different mortality tables or retirement ages: each plan
+    turns the same uniform into a lifespan through its own survival curve.
     """
+    return np.random.default_rng([config.seed, 1]).random(config.n_paths)
+
+
+def lifespans_for(plan: RetirementPlan, u: np.ndarray) -> np.ndarray:
+    """Years lived in retirement: from the plan's mortality model, or the fixed horizon."""
     if plan.mortality is None:
-        return np.full(config.n_paths, float(plan.n_years))
-    rng = np.random.default_rng([config.seed, 1])
-    return plan.mortality.sample_remaining_life(plan.retirement_age, config.n_paths, rng)
+        return np.full(u.size, float(plan.n_years))
+    return plan.mortality.remaining_life_from_uniform(plan.retirement_age, u)
 
 
 def simulate(
     plan: RetirementPlan,
     config: SimulationConfig = SimulationConfig(),
     returns: tuple[np.ndarray, np.ndarray] | None = None,
+    uniforms: np.ndarray | None = None,
     lifespans: np.ndarray | None = None,
 ) -> SimulationResult:
     """Simulate a retirement plan.
@@ -330,29 +403,44 @@ def simulate(
     Args:
         plan: The household and its strategy.
         config: Number of paths, seed, return model and market assumptions.
-        returns: Optional pre-generated ``(stock, bond)`` arrays. Passing the
+        returns: Optional pre-generated ``(stock, bond)`` arrays with at least
+            ``plan.n_years`` columns (extra columns are ignored). Passing the
             same arrays to several plans gives *common random numbers*: every
             plan faces identical markets, so differences between plans are not
             sampling noise.
-        lifespans: Optional pre-generated lifespans (same idea, for mortality).
+        uniforms: Optional pre-generated lifespan uniforms (same idea for longevity).
+        lifespans: Optional lifespans in years, overriding mortality entirely
+            (useful for tests and what-if analysis).
 
     Returns:
         A :class:`SimulationResult`.
     """
+    n_years = plan.n_years
     if returns is None:
         returns = generate_returns(
-            config.market, config.n_paths, plan.n_years,
-            model=config.model, antithetic=config.antithetic, seed=config.seed,
+            config.market, config.n_paths, n_years, model=config.model,
+            antithetic=config.antithetic, seed=config.seed, block_size=config.block_size,
         )
     stock, bond = returns
-    if stock.shape != (config.n_paths, plan.n_years):
-        raise ValueError("returns shape does not match config.n_paths x plan.n_years")
+    if stock.shape[0] != config.n_paths or stock.shape[1] < n_years:
+        raise ValueError("returns must have config.n_paths rows and at least plan.n_years columns")
+    stock, bond = stock[:, :n_years], bond[:, :n_years]
+
     if lifespans is None:
-        lifespans = sample_lifespans(plan, config)
+        u = lifespan_uniforms(config) if uniforms is None else uniforms
+        lifespans = lifespans_for(plan, u)
 
     port = portfolio_returns_for(plan, stock, bond)
     income = plan.income_schedule(config.market.inflation)
     out = run_paths(plan, port, lifespans, income)
-    return SimulationResult(
+    result = SimulationResult(
         plan=plan, config=config, lifespan=lifespans, portfolio_returns=port, income=income, **out
     )
+    share = result.beyond_horizon.mean()
+    if share > BEYOND_HORIZON_WARNING:
+        warnings.warn(
+            f"{share:.2%} of simulated retirees outlive max_age={plan.max_age}; their years "
+            "beyond it are not simulated. Raise max_age.",
+            stacklevel=2,
+        )
+    return result

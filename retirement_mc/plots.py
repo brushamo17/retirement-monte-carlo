@@ -93,6 +93,25 @@ def reorder_chart(demo: dict, ax=None):
     return ax
 
 
+def model_risk_chart(rates, curves: dict[str, list[float]], ax=None):
+    """Success by withdrawal rate under different return models (model risk)."""
+    ax = ax or plt.subplots(figsize=(9, 4.8))[1]
+    colors = SERIES + ["#7a8293"]
+    for (name, vals), color in zip(curves.items(), colors):
+        dashed = name.startswith("Historical")
+        ax.plot(rates, vals, color=color, linewidth=2, marker="o", markersize=5,
+                linestyle=(0, (4, 3)) if dashed else "-", label=name)
+    ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=1))
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+    ax.set_xticks(rates)
+    ax.set_ylim(0, 1.02)
+    ax.set_xlabel("Initial withdrawal rate (60/40, 30 years)", color=MUTED)
+    ax.set_title("Same plan, different return models", loc="left", color=INK, fontsize=12)
+    ax.legend(frameon=False, fontsize=8.5, loc="lower left")
+    _style(ax)
+    return ax
+
+
 def scenario_chart(summaries: dict[str, dict], axes=None):
     """Side-by-side bars: probability of a shortfall while alive, and median bequest."""
     if axes is None:

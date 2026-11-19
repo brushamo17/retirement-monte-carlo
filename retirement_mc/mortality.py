@@ -43,10 +43,8 @@ class GompertzMortality:
         t = np.asarray(t, dtype=float)
         return np.exp(np.exp((age - m) / b) * (1.0 - np.exp(t / b)))
 
-    def sample_remaining_life(
-        self, age: float, size: int, rng: np.random.Generator
-    ) -> np.ndarray:
-        """Draw remaining lifetimes (in years) by inverse-transform sampling.
+    def remaining_life_from_uniform(self, age: float, u: np.ndarray) -> np.ndarray:
+        """Turn Uniform(0, 1) draws into remaining lifetimes (inverse transform).
 
         Solving ``U = S(t)`` for ``t``:
 
@@ -57,8 +55,14 @@ class GompertzMortality:
         Since ln U < 0, the argument of the outer log is above 1 and t > 0.
         """
         m, b = self.modal_age, self.dispersion
-        u = np.clip(rng.random(size), 1e-12, 1.0)  # guard against log(0)
+        u = np.clip(np.asarray(u, dtype=float), 1e-12, 1.0)  # guard against log(0)
         return b * np.log1p(-np.log(u) * np.exp(-(age - m) / b))
+
+    def sample_remaining_life(
+        self, age: float, size: int, rng: np.random.Generator
+    ) -> np.ndarray:
+        """Draw ``size`` remaining lifetimes (in years) by inverse-transform sampling."""
+        return self.remaining_life_from_uniform(age, rng.random(size))
 
     def life_expectancy(self, age: float, max_years: float = 60.0) -> float:
         """Expected remaining lifetime, E[T] = integral of S(t) dt, by the trapezoid rule."""

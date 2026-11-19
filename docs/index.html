@@ -229,17 +229,17 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
         <span class="label" id="modelLbl">Distribution</span>
         <div class="seg" role="radiogroup" aria-labelledby="modelLbl">
           <input type="radio" name="model" id="modelN" value="normal" checked><label for="modelN">Lognormal</label>
-          <input type="radio" name="model" id="modelT" value="t"><label for="modelT">Fat tails (t₅)</label>
+          <input type="radio" name="model" id="modelT" value="fat"><label for="modelT">Fat tails</label>
         </div>
       </div>
       <div class="field">
         <label for="preset">Capital market assumptions</label>
         <select id="preset">
-          <option value="hist">Long-run US-style</option>
+          <option value="hist">US history 1928–2025</option>
           <option value="low">Muted forward-looking</option>
           <option value="custom">Custom</option>
         </select>
-        <span class="hint">Annual real (after-inflation) returns. Illustrative assumptions, not forecasts.</span>
+        <span class="hint">Annual real (after-inflation) returns. Default: S&amp;P 500 and 10-year Treasuries, 1928–2025 (Damodaran, NYU), deflated by CPI.</span>
       </div>
       <div class="grid2">
         <div class="field"><label for="ms">Stock mean %</label><input type="number" id="ms" step="0.1"></div>
@@ -357,11 +357,11 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       <div class="method">
         <div>
           <h3>Returns</h3>
-          <p>Each simulated year draws real stock and bond returns. In lognormal mode, log-returns are bivariate normal, calibrated so arithmetic means and standard deviations match the inputs, and correlated through a Cholesky factor: <span class="mono">z<sub>b</sub> = ρz<sub>s</sub> + √(1−ρ²)·z₂</span>. Fat-tail mode uses a multivariate Student-t with 5 degrees of freedom, rescaled to the same mean and variance, so crashes are more frequent at equal volatility.</p>
+          <p>Each simulated year draws real stock and bond returns. In lognormal mode, log-returns are bivariate normal and correlated through a Cholesky factor: <span class="mono">z<sub>b</sub> = ρz<sub>s</sub> + √(1−ρ²)·z₂</span>. The log-space parameters, including ρ, are solved so that the arithmetic means, standard deviations and correlation match the inputs exactly. Fat-tail mode is a two-regime mixture: 10% of years have twice the volatility, for stocks and bonds together, with the same mean and overall volatility, so crashes are more frequent.</p>
         </div>
         <div>
           <h3>Spending</h3>
-          <p>Withdrawals come out at the start of each year in today’s dollars, so the fixed rule is the inflation-adjusted “4% rule” framing. A path fails in the first year the balance cannot cover that year’s withdrawal. Guardrails follow a simplified Guyton–Klinger rule: if the current withdrawal rate drifts 20% above the starting rate, spending is cut 10% (skipped in the final 15 years); if it drifts 20% below, spending rises 10%.</p>
+          <p>Withdrawals come out at the start of each year in today’s dollars, so the fixed rule is the inflation-adjusted “4% rule” framing. A path fails in the first year the balance cannot cover that year’s withdrawal, or if spending ever falls below 80% of the starting amount. Guardrails follow a simplified Guyton–Klinger rule: if the current withdrawal rate drifts 20% above the starting rate, spending is cut 10% (skipped in the final 15 years); if it drifts 20% below, spending rises 10%.</p>
         </div>
         <div>
           <h3>Estimation</h3>
@@ -387,7 +387,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
   const $ = (id) => document.getElementById(id);
 
   const PRESETS = {
-    hist: { ms: 8.0, ss: 19, mb: 2.5, sb: 8, rho: 0.10 },
+    hist: { ms: 8.6, ss: 19.3, mb: 1.8, sb: 8.9, rho: 0.09 },
     low:  { ms: 5.5, ss: 17, mb: 1.5, sb: 6, rho: 0.20 }
   };
 
@@ -446,29 +446,67 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
     };
   }
 
+  // ---------- calibration (arithmetic mean, sd and correlation are matched exactly) ----------
+  // Regimes: [probabilities, volatility multipliers]. "fat" = 10% of years at twice the volatility.
+  const REGIMES = { normal: [[1], [1]], fat: [[0.9, 0.1], [1, 2]] };
+  function bisect(f, lo, hi) {
+    let flo = f(lo);
+    for (let i = 0; i < 200 && hi - lo > 1e-12; i++) {
+      const mid = (lo + hi) / 2, fm = f(mid);
+      if ((fm < 0) === (flo < 0)) { lo = mid; flo = fm; } else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+  function mixExp(model, a, sig) {
+    const [p, k] = REGIMES[model]; let s = 0;
+    for (let i = 0; i < p.length; i++) s += p[i] * Math.exp(0.5 * (a * k[i] * sig) ** 2);
+    return s;
+  }
+  // Log-space (mu, sigma) so that 1 + R = exp(mu + sigma * k * z) has the target arithmetic mean and sd.
+  function calibMarginal(mean, sd, model) {
+    if (sd <= 0) return [Math.log(1 + mean), 0];
+    const target = 1 + (sd * sd) / ((1 + mean) ** 2);
+    const sig = bisect((x) => mixExp(model, 2, x) / mixExp(model, 1, x) ** 2 - target, 0, 3);
+    return [Math.log(1 + mean) - Math.log(mixExp(model, 1, sig)), sig];
+  }
+  function arithCorr(r, ss, sb, model) {
+    const [p, k] = REGIMES[model]; let exy = 0;
+    for (let i = 0; i < p.length; i++) exy += p[i] * Math.exp(0.5 * k[i] * k[i] * (ss * ss + sb * sb + 2 * r * ss * sb));
+    const ex = mixExp(model, 1, ss), ey = mixExp(model, 1, sb);
+    return (exy - ex * ey) / Math.sqrt((mixExp(model, 2, ss) - ex * ex) * (mixExp(model, 2, sb) - ey * ey));
+  }
+  // Log-space correlation that produces the requested correlation of arithmetic returns.
+  function calibCorr(target, ss, sb, model) {
+    if (ss <= 0 || sb <= 0) return 0;
+    const f = (r) => arithCorr(r, ss, sb, model) - target;
+    if (f(-0.999999) > 0) return -0.999999;
+    if (f(0.999999) < 0) return 0.999999;
+    return bisect(f, -0.999999, 0.999999);
+  }
+
   // ---------- return generation (cached; common random numbers) ----------
   let cache = { key: null };
   function getReturns(c) {
     const key = [c.N, c.T, c.seed, c.model, c.ms, c.ss, c.mb, c.sb, c.rho, c.anti].join("|");
     if (cache.key === key) return cache;
-    const { N, T } = c;
+    const { N, T } = c, model = c.model;
     const Rs = new Float64Array(N * T), Rb = new Float64Array(N * T);
-    const nrm = makeNormal(mulberry32(c.seed));
-    const lsS = Math.sqrt(Math.log(1 + (c.ss * c.ss) / ((1 + c.ms) ** 2))), lmS = Math.log(1 + c.ms) - lsS * lsS / 2;
-    const lsB = Math.sqrt(Math.log(1 + (c.sb * c.sb) / ((1 + c.mb) ** 2))), lmB = Math.log(1 + c.mb) - lsB * lsB / 2;
-    const rc = Math.sqrt(1 - c.rho * c.rho), nu = 5, isT = c.model === "t";
+    const rng = mulberry32(c.seed), nrm = makeNormal(rng);
+    const [lmS, lsS] = calibMarginal(c.ms, c.ss, model);
+    const [lmB, lsB] = calibMarginal(c.mb, c.sb, model);
+    const rho = calibCorr(c.rho, lsS, lsB, model), rc = Math.sqrt(1 - rho * rho);
+    const [probs, mults] = REGIMES[model];
     const step = c.anti ? 2 : 1;
     for (let i = 0; i < N; i += step) {
       for (let t = 0; t < T; t++) {
         const z1 = nrm(), z2 = nrm();
-        let k = 1;
-        if (isT) { let ch = 0; for (let j = 0; j < nu; j++) { const g = nrm(); ch += g * g; } k = Math.sqrt((nu - 2) / ch); }
+        const k = probs.length > 1 && rng() < probs[1] ? mults[1] : 1;   // regime shared by both assets
         for (let a = 0; a < step && i + a < N; a++) {
           const sg = a ? -1 : 1;
-          const e1 = sg * z1 * k, e2 = sg * (c.rho * z1 + rc * z2) * k;
+          const e1 = sg * z1 * k, e2 = sg * (rho * z1 + rc * z2) * k;
           const idx = (i + a) * T + t;
-          if (isT) { Rs[idx] = Math.max(-0.95, c.ms + c.ss * e1); Rb[idx] = Math.max(-0.95, c.mb + c.sb * e2); }
-          else { Rs[idx] = Math.exp(lmS + lsS * e1) - 1; Rb[idx] = Math.exp(lmB + lsB * e2) - 1; }
+          Rs[idx] = Math.exp(lmS + lsS * e1) - 1;
+          Rb[idx] = Math.exp(lmB + lsB * e2) - 1;
         }
       }
     }
@@ -477,7 +515,9 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
   }
 
   // ---------- one retirement path ----------
-  const OUT = { fail: 0, B: 0, minW: 0, cut: 0 };
+  // Success = every year's spending was funded AND spending never fell below FLOOR x the starting amount.
+  const FLOOR = 0.8;
+  const OUT = { fail: 0, B: 0, minW: 0, cut: 0, ok: 1 };
   function runPath(Rs, Rb, off, T, w, fee, rate, guard, bal, boff) {
     let B = 1, W = rate, minW = rate, cut = 0, fail = 0;
     if (bal) bal[boff] = 1;
@@ -486,18 +526,22 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
         const cwr = W / B;
         if (cwr > rate * 1.2 && T - t > 15) { W *= 0.9; cut = 1; }
         else if (cwr < rate * 0.8) W *= 1.1;
-        if (W < minW) minW = W;
       }
       if (B < W) {
-        fail = t + 1; B = 0;
+        // Shortfall: this year only what is left can be spent, and nothing in later years.
+        fail = t + 1;
+        minW = t + 1 < T ? 0 : Math.min(minW, B);
+        B = 0;
         if (bal) for (let u = t + 1; u <= T; u++) bal[boff + u] = 0;
         break;
       }
+      if (W < minW) minW = W;          // spending actually funded this year
       const r = w * Rs[off + t] + (1 - w) * Rb[off + t] - fee;
       B = (B - W) * (1 + r);
       if (bal) bal[boff + t + 1] = B;
     }
     OUT.fail = fail; OUT.B = B; OUT.minW = minW; OUT.cut = cut;
+    OUT.ok = !fail && minW >= FLOOR * rate - 1e-12 ? 1 : 0;
   }
 
   function seStats(okArr, N, anti) {
@@ -518,11 +562,12 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
   function simulate(c, R) {
     const { N, T } = c, w = c.stock / 100, guard = c.rule === "guard";
     const bal = new Float64Array(N * (T + 1)), ok = new Uint8Array(N), fails = [], endB = new Float64Array(N);
-    const minW = new Float64Array(N); let cuts = 0;
+    const minW = new Float64Array(N); let cuts = 0, below = 0;
     for (let i = 0; i < N; i++) {
       runPath(R.Rs, R.Rb, i * T, T, w, c.fee, c.rate, guard, bal, i * (T + 1));
-      ok[i] = OUT.fail ? 0 : 1; if (OUT.fail) fails.push(OUT.fail);
+      ok[i] = OUT.ok; if (OUT.fail) fails.push(OUT.fail);
       endB[i] = OUT.B; minW[i] = OUT.minW; cuts += OUT.cut;
+      if (OUT.minW < FLOOR * c.rate - 1e-12) below++;
     }
     const st = seStats(ok, N, c.anti);
     // percentiles by year
@@ -575,7 +620,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       return { bal: b, fail: OUT.fail, end: OUT.B };
     });
 
-    return { c, st, pcts, alive, endSorted, failsSorted, minWSorted, cuts, qFirst, qLast, L, variants, geo: Math.exp(whole[mid]) - 1 };
+    return { c, st, pcts, alive, endSorted, failsSorted, minWSorted, cuts, below, qFirst, qLast, L, variants, geo: Math.exp(whole[mid]) - 1 };
   }
 
   // ---------- tooltip helper ----------
@@ -747,7 +792,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
 
   // ---------- summary ----------
   function renderSummary(res) {
-    const { c, st, endSorted, failsSorted, minWSorted, cuts } = res, S = c.S, N = c.N;
+    const { c, st, endSorted, failsSorted, minWSorted, cuts, below } = res, S = c.S, N = c.N;
     $("tSucc").textContent = pct(st.p);
     const pill = $("tPill");
     if (st.p >= 0.85) { pill.className = "pill good"; pill.textContent = "Comfortable"; }
@@ -760,9 +805,9 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
     $("tMed").textContent = money(quantileSorted(endSorted, 0.5) * S);
     $("tP10").textContent = money(quantileSorted(endSorted, 0.1) * S);
     if (c.rule === "guard") {
-      $("t4k").textContent = "Lowest yearly income, median path";
+      $("t4k").textContent = "Lowest yearly spending, median path";
       $("t4v").textContent = pct(quantileSorted(minWSorted, 0.5) / c.rate, 0);
-      $("t4s").textContent = `of the starting ${money(c.rate * S)}/yr. ${pct(cuts / N, 0)} of paths hit the cut guardrail at least once (sometimes after earlier raises); 10th-percentile low point ${money(quantileSorted(minWSorted, 0.1) * S)}/yr.`;
+      $("t4s").textContent = `of the starting ${money(c.rate * S)}/yr. In ${pct(below / N, 1)} of paths spending fell below 80% of that, which counts as a failure; ${pct(cuts / N, 0)} hit the cut guardrail at least once. 10th-percentile low point ${money(quantileSorted(minWSorted, 0.1) * S)}/yr.`;
     } else {
       $("t4k").textContent = "When it fails";
       if (failsSorted.length) {
@@ -794,7 +839,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
     $("stockOut").textContent = `${c.stock}% / ${100 - c.stock}%`;
     $("feeOut").textContent = (c.fee * 100).toFixed(2) + "%";
     $("ruleHint").textContent = c.rule === "guard"
-      ? "Spending flexes: cut 10% when the withdrawal rate runs 20% high, raise 10% when 20% low."
+      ? "Spending flexes: cut 10% when the withdrawal rate runs 20% high, raise 10% when 20% low. Success also requires spending to stay at or above 80% of the starting amount."
       : "Same inflation-adjusted amount every year, whatever markets do.";
   }
 
@@ -808,7 +853,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
     const T = c.T, nh = Math.min(c.N, 10000), guard = c.rule === "guard";
     const vals = H_STOCKS.map((s) => H_RATES.map((r) => {
       let ok = 0; const w = s / 100, rate = r / 100;
-      for (let i = 0; i < nh; i++) { runPath(R.Rs, R.Rb, i * T, T, w, c.fee, rate, guard, null, 0); if (!OUT.fail) ok++; }
+      for (let i = 0; i < nh; i++) { runPath(R.Rs, R.Rb, i * T, T, w, c.fee, rate, guard, null, 0); ok += OUT.ok; }
       return ok / nh;
     }));
     heatCache = { key, vals, nh };

@@ -21,7 +21,13 @@ from retirement_mc import (
     social_security_factor,
     success_grid,
 )
-from retirement_mc.returns import lognormal_params
+from retirement_mc.analysis import compare_scenarios, paired_difference
+from retirement_mc.returns import (
+    arithmetic_correlation,
+    calibrate_correlation,
+    calibrate_marginal,
+    lognormal_params,
+)
 
 FAST = SimulationConfig(n_paths=2_000, seed=7)
 
@@ -51,31 +57,51 @@ def test_zero_volatility_matches_closed_form():
     assert res.fail_year[0] == first_short
 
 
-def test_lognormal_moments_match_inputs():
-    """Simulated returns should reproduce the arithmetic mean and sd we asked for."""
-    market = MarketAssumptions()
-    stock, bond = generate_returns(market, 200_000, 1, seed=1)
+@pytest.mark.parametrize("model", ["lognormal", "fat_tailed"])
+def test_parametric_models_match_arithmetic_moments_and_correlation(model):
+    """Both models must reproduce the arithmetic mean, sd *and* correlation we asked for."""
+    market = MarketAssumptions(correlation=0.30)
+    stock, bond = generate_returns(market, 400_000, 1, model=model, seed=1)
     assert stock.mean() == pytest.approx(market.stock_mean, abs=0.002)
     assert stock.std() == pytest.approx(market.stock_sd, abs=0.002)
-    assert np.corrcoef(np.log1p(stock[:, 0]), np.log1p(bond[:, 0]))[0, 1] == pytest.approx(
-        market.correlation, abs=0.01
-    )
+    assert bond.std() == pytest.approx(market.bond_sd, abs=0.001)
+    assert np.corrcoef(stock[:, 0], bond[:, 0])[0, 1] == pytest.approx(0.30, abs=0.01)
 
 
-def test_fat_tails_keep_mean_and_sd_but_add_crashes():
+def test_numeric_calibration_matches_closed_form_lognormal():
+    mu, sigma = calibrate_marginal(0.07, 0.18, "lognormal")
+    assert (mu, sigma) == pytest.approx(lognormal_params(0.07, 0.18), abs=1e-9)
+
+
+def test_correlation_calibration_matches_textbook_lognormal_formula():
+    """Corr(e^X, e^Y) = (e^{rho sx sy} - 1) / sqrt((e^{sx^2} - 1)(e^{sy^2} - 1))."""
+    sx, sy, rho = 0.18, 0.08, 0.4
+    textbook = (np.exp(rho * sx * sy) - 1) / np.sqrt((np.exp(sx**2) - 1) * (np.exp(sy**2) - 1))
+    assert arithmetic_correlation(rho, sx, sy) == pytest.approx(textbook, rel=1e-12)
+    assert calibrate_correlation(textbook, sx, sy) == pytest.approx(rho, abs=1e-9)
+
+
+def test_unreachable_correlation_is_rejected():
+    _, s1 = calibrate_marginal(0.08, 1.5)   # extreme volatility caps the reachable correlation
+    _, s2 = calibrate_marginal(0.02, 0.05)
+    with pytest.raises(ValueError):
+        calibrate_correlation(0.99, s1, s2)
+
+
+def test_fat_tails_add_crashes_without_any_floor():
     market = MarketAssumptions()
-    s_n, _ = generate_returns(market, 200_000, 1, model="lognormal", seed=2)
-    s_t, _ = generate_returns(market, 200_000, 1, model="t", seed=2)
-    assert s_t.std() == pytest.approx(market.stock_sd, abs=0.004)
+    s_n, _ = generate_returns(market, 400_000, 1, model="lognormal", seed=2)
+    s_f, _ = generate_returns(market, 400_000, 1, model="fat_tailed", seed=2)
     crash = market.stock_mean - 3 * market.stock_sd
-    assert (s_t < crash).mean() > (s_n < crash).mean()
+    assert (s_f < crash).mean() > 1.5 * (s_n < crash).mean()
+    assert s_f.min() > -1.0  # exp(x) - 1 can never reach -100%, so no floor is needed
 
 
 def test_antithetic_pairs_are_mirror_images():
     """In log space each pair sits symmetrically around mu."""
     market = MarketAssumptions()
     stock, _ = generate_returns(market, 10, 5, antithetic=True, seed=3)
-    mu, _ = lognormal_params(market.stock_mean, market.stock_sd)
+    mu, _ = calibrate_marginal(market.stock_mean, market.stock_sd)
     logs = np.log1p(stock)
     assert np.allclose(logs[0::2] + logs[1::2], 2 * mu)
 
@@ -125,11 +151,31 @@ def test_common_random_numbers_make_success_monotone():
     assert np.all(np.diff(grid, axis=1) <= 0)
 
 
-def test_guardrails_do_not_fail_more_often_than_fixed():
-    """Guardrails cut spending in bad markets, so success should not fall much below fixed."""
-    fixed = simulate(RetirementPlan(annual_spending=50_000), FAST).success.mean()
-    guard = simulate(RetirementPlan(annual_spending=50_000, rule="guardrails"), FAST).success.mean()
-    assert guard >= fixed - 0.02
+def test_guardrails_rarely_run_out_but_the_floor_catches_deep_cuts():
+    """Guardrails avoid shortfalls by cutting; the spending floor must count those cuts."""
+    fixed = simulate(RetirementPlan(annual_spending=50_000), FAST)
+    guard = simulate(RetirementPlan(annual_spending=50_000, rule="guardrails"), FAST)
+    assert guard.funded.mean() >= fixed.funded.mean()
+    assert np.all(guard.success <= guard.funded)
+    deep_cut = guard.lowest_spending < 0.8
+    assert deep_cut.any()
+    assert not guard.success[deep_cut].any()
+    no_floor = simulate(replace(guard.plan, spending_floor=0.0), FAST)
+    assert np.array_equal(no_floor.success, no_floor.funded)
+
+
+def test_fixed_rule_success_does_not_depend_on_the_floor():
+    """Under fixed spending, consumption only drops when money runs out."""
+    a = simulate(RetirementPlan(annual_spending=50_000, spending_floor=0.0), FAST)
+    b = simulate(RetirementPlan(annual_spending=50_000, spending_floor=0.9), FAST)
+    assert np.array_equal(a.success, b.success)
+
+
+def test_lowest_spending_counts_actual_funded_spending_after_a_shortfall():
+    plan = RetirementPlan(initial_portfolio=100_000, annual_spending=40_000, horizon_years=10)
+    res = simulate(plan, FAST)
+    assert np.all(res.lowest_spending[~res.funded] < 1.0)
+    assert res.lowest_spending.min() == pytest.approx(0.0)
 
 
 def test_mortality_counts_only_years_lived():
@@ -140,3 +186,52 @@ def test_mortality_counts_only_years_lived():
     assert res.success.all()
     res_full = simulate(replace(plan), FAST)
     assert not res_full.success.all()
+
+
+def test_crn_comparison_uses_each_plans_own_mortality():
+    """Plans with different mortality must get different lifespans from the same uniforms."""
+    base = dict(annual_spending=45_000, retirement_age=65)
+    res = compare_scenarios(
+        {"short-lived": RetirementPlan(**base, mortality=GompertzMortality(modal_age=85)),
+         "long-lived": RetirementPlan(**base, mortality=GompertzMortality(modal_age=92))},
+        FAST,
+    )
+    a, b = res["short-lived"], res["long-lived"]
+    assert np.all(a.lifespan <= b.lifespan)                        # same uniform, later modal age
+    assert a.lifespan.mean() < b.lifespan.mean()
+    assert np.allclose(a.portfolio_returns, b.portfolio_returns)   # same markets
+    assert np.all(b.success <= a.success)                          # living longer can only hurt
+
+
+def test_crn_comparison_handles_different_horizons():
+    res = compare_scenarios(
+        {"25 years": RetirementPlan(horizon_years=25), "35 years": RetirementPlan(horizon_years=35)},
+        FAST,
+    )
+    a, b = res["25 years"], res["35 years"]
+    assert np.allclose(a.portfolio_returns, b.portfolio_returns[:, :25])
+    assert np.all(b.success <= a.success)
+
+
+def test_paired_difference_is_tighter_than_independent_comparison():
+    plans = {"base": RetirementPlan(annual_spending=45_000), "less": RetirementPlan(annual_spending=40_000)}
+    res = compare_scenarios(plans, FAST)
+    d = paired_difference(res["base"], res["less"])
+    independent_se = np.hypot(res["base"].success_probability().se, res["less"].success_probability().se)
+    assert d.p > 0
+    assert d.se < independent_se
+
+
+def test_outliving_the_horizon_triggers_a_warning():
+    plan = RetirementPlan(mortality=GompertzMortality(), retirement_age=65, max_age=80)
+    with pytest.warns(UserWarning, match="outlive max_age"):
+        res = simulate(plan, FAST)
+    assert res.summary()["share_beyond_horizon"] > 0.5
+
+
+def test_default_horizon_is_long_enough():
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = simulate(RetirementPlan(mortality=GompertzMortality()), FAST)
+    assert res.beyond_horizon.sum() == 0

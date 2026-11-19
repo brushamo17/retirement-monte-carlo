@@ -2,7 +2,8 @@
 
     python run_example.py
 
-Prints three reports and saves four charts to ./figures:
+Prints three reports and saves four charts to ./figures (returns calibrated
+to US data for 1928-2025):
 
 1. The classic question: $1M, 4% inflation-adjusted withdrawals, 60/40, 30 years.
 2. The policy map: success for every withdrawal rate and stock share.
@@ -44,6 +45,7 @@ def money(x: float) -> str:
 def part1_classic() -> None:
     print("=" * 72)
     print("1. $1M, 4% inflation-adjusted withdrawals, 60/40, 30 years, 0.5% fees")
+    print(f"   Market assumptions: {CONFIG.market.label}")
     print("=" * 72)
     plan = RetirementPlan(initial_portfolio=1_000_000, annual_spending=40_000, stock_share=0.6)
     res = simulate(plan, CONFIG)
@@ -57,12 +59,17 @@ def part1_classic() -> None:
     e = anti.success_probability()
     print(f"With antithetic variates:    {e}  (plain-MC SE would be {e.se_plain:.2%})")
 
-    fat = simulate(plan, SimulationConfig(n_paths=10_000, seed=3044, model="t"))
-    print(f"Fat-tailed (t, 5 df):        {fat.success_probability()}")
+    fat = simulate(plan, SimulationConfig(n_paths=10_000, seed=3044, model="fat_tailed"))
+    print(f"Fat-tailed (two-regime):     {fat.success_probability()}")
+
+    boot = simulate(plan, SimulationConfig(n_paths=10_000, seed=3044, model="bootstrap"))
+    print(f"Historical block bootstrap:  {boot.success_probability()}")
 
     guard = simulate(RetirementPlan(annual_spending=40_000, rule="guardrails"), CONFIG)
     g = guard.summary()
-    print(f"Guardrails rule:             {guard.success_probability()}")
+    print(f"Guardrails rule:             {guard.success_probability()}  (spending must stay >= 80% of plan)")
+    print(f"  never ran out of money:    {g['funded']:.1%}")
+    print(f"  spending fell below 80%:   {g['p_below_floor']:.1%}")
     print(f"  median lowest spending:    {g['median_lowest_spending']:.0%} of the starting $40,000")
 
     q = sequence_quintiles(res)
@@ -130,7 +137,7 @@ def part3_income() -> None:
     summaries = {k: r.summary() for k, r in results.items()}
     print(f"\n{'scenario':<38}{'success':>9}{'median left':>14}{'floor if short':>16}")
     for k, s in summaries.items():
-        floor = f"{s['median_floor_if_failed']:.0%}" if s["median_floor_if_failed"] is not None else "n/a"
+        floor = f"{s['median_floor_if_short']:.0%}" if s["median_floor_if_short"] is not None else "n/a"
         print(f"{k:<38}{s['success']:>9.1%}{money(s['median_terminal']):>14}{floor:>16}")
     print("\n'floor if short' = median lowest spending, as a share of $80k, among paths that ran short.")
 
