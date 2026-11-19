@@ -1,11 +1,22 @@
 # Retirement Monte Carlo Simulator
 
-How likely is a retirement portfolio to fund every year of a retirement, and how do the withdrawal rate, the stock/bond mix, the order of market returns, Social Security timing and annuities change that answer?
+**Will the money last?** A Monte Carlo simulator for retirement income: withdrawal rates, asset mix, sequence-of-returns risk, Social Security timing, annuities and longevity risk, with every probability reported alongside its confidence interval.
 
-This project simulates tens of thousands of possible retirements in NumPy and reports the probability of success with a proper confidence interval. It started as an application of the simulation methods from Georgia Tech's ISyE 3044 (Simulation Analysis and Design) to the retirement-income questions at the core of the CFP curriculum.
+[![tests](https://github.com/brushamo17/retirement-monte-carlo/actions/workflows/tests.yml/badge.svg)](https://github.com/brushamo17/retirement-monte-carlo/actions/workflows/tests.yml)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
-**[Interactive demo](https://brushamo17.github.io/retirement-monte-carlo/)**: a browser version of the core model (withdrawal rate, asset mix, guardrails, fat tails, sequence risk). The Python package adds Social Security, pensions, annuities and random lifespans.
+### [Try the interactive demo →](https://brushamo17.github.io/retirement-monte-carlo/)
 
+[![Interactive demo](figures/demo.png)](https://brushamo17.github.io/retirement-monte-carlo/)
+
+**Key findings** (10,000 simulated retirements, illustrative assumptions)
+
+- The classic 4% rule (60/40, 30 years) succeeds **89.6%** of the time (95% CI 89.0–90.2%).
+- **Sequence risk dominates:** when the first decade's returns land in the worst fifth, only 56% of portfolios last, versus 100% in the best fifth. Bad returns in the last decade barely matter (87% vs 92%).
+- An inflation-adjusted annuity cuts the chance of running short from 14.3% to 11.1% and raises the spending floor from 40% to 62% of the goal, at the cost of a smaller bequest.
+
+The browser demo covers the core model; the Python package adds Social Security, pensions, annuities and random lifespans. The project applies the simulation methods from Georgia Tech's ISyE 3044 to the retirement-income questions at the core of financial planning.
 ---
 
 ## Quick start
