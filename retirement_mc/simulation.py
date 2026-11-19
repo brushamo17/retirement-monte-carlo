@@ -12,9 +12,11 @@ One simulated year, for every path at once:
     2. Portfolio withdrawal W = max(spending - guaranteed income, 0).
     3. If the balance B cannot cover W and the retiree is alive, record a
        shortfall. Withdraw what is there.
-    4. Grow what is left: B <- (B - W) * (1 + r), where r is the portfolio's
-       real return net of fees. The portfolio is rebalanced to its target mix
-       every year, so r = w * r_stock + (1 - w) * r_bond - fee.
+    4. Grow what is left: B <- (B - W + surplus) * (1 + r), where r is the
+       portfolio's real return net of fees and "surplus" is guaranteed income
+       beyond spending, if it is reinvested. The portfolio is rebalanced to its
+       target mix every year and the fee is charged on assets:
+       r = (1 + w * r_stock + (1 - w) * r_bond) * (1 - fee) - 1.
 
 What counts as success
 ----------------------
@@ -26,8 +28,18 @@ A retirement succeeds if, in every year the retiree is alive,
 Condition (b) matters for flexible spending rules. Guardrails avoid running
 out of money by cutting spending, so without (b) a retiree whose spending was
 cut to 60% of the plan would still count as a "success". The default floor is
-80%. Under the fixed rule spending only drops when money runs out, so (b) adds
-nothing beyond (a).
+80%; if the plan splits spending into essential and discretionary parts, the
+floor is the essential budget instead. Under the fixed rule spending only
+drops when money runs out, so (b) adds nothing beyond (a).
+
+Spending rules
+--------------
+* ``"fixed"``: the same real amount every year.
+* ``"guardrails"``: a simplified Guyton-Klinger rule that cuts or raises *total*
+  spending by 10% when the withdrawal rate drifts out of a band.
+* ``"essentials_first"``: the same triggers and the same dollar size of cut,
+  but cuts come out of discretionary spending only, and stop once it is gone.
+  Essentials are never cut by the rule (only by running out of money).
 """
 
 from __future__ import annotations
@@ -48,6 +60,8 @@ CUT = 0.10                  # size of a spending cut
 RAISE = 0.10                # size of a spending raise
 NO_CUTS_FINAL_YEARS = 15    # Guyton-Klinger skip cuts late in retirement
 
+RULES = ("fixed", "guardrails", "essentials_first")
+
 # If more than this share of lifespans outlive the simulation horizon, warn.
 BEYOND_HORIZON_WARNING = 0.001
 
@@ -63,10 +77,18 @@ class RetirementPlan:
         stock_share: Fraction of the portfolio in stocks (the rest is bonds).
         fee: Annual fees as a fraction of assets (advisory + fund expenses).
         horizon_years: Length of retirement when ``mortality`` is None.
-        rule: ``"fixed"`` (same real spending every year) or ``"guardrails"``.
+        rule: ``"fixed"``, ``"guardrails"`` or ``"essentials_first"``.
         spending_floor: Lowest acceptable spending, as a fraction of
             ``annual_spending``. A path where spending drops below it in any
             year lived counts as a failure even if every target was funded.
+            Ignored when ``essential_spending`` is set (the essentials are the floor).
+        essential_spending: The part of ``annual_spending`` that is essential
+            (housing, healthcare, food), in today's dollars. The rest is
+            discretionary (travel, hobbies, gifts). Required by the
+            ``"essentials_first"`` rule.
+        surplus_income: What happens when guaranteed income exceeds spending:
+            ``"reinvest"`` (default) adds the excess to the portfolio;
+            ``"spend"`` assumes the household spends it.
         income: Social Security, pensions and other income streams.
         annuities: Annuities bought with part of the portfolio at retirement.
         retirement_age: Age at the start of the simulation.
@@ -84,6 +106,8 @@ class RetirementPlan:
     horizon_years: int = 30
     rule: str = "fixed"
     spending_floor: float = 0.80
+    essential_spending: float | None = None
+    surplus_income: str = "reinvest"
     income: tuple[IncomeStream, ...] = ()
     annuities: tuple[Annuity, ...] = ()
     retirement_age: int = 65
@@ -91,8 +115,16 @@ class RetirementPlan:
     max_age: int = 115
 
     def __post_init__(self) -> None:
-        if self.rule not in ("fixed", "guardrails"):
-            raise ValueError("rule must be 'fixed' or 'guardrails'")
+        if self.rule not in RULES:
+            raise ValueError(f"rule must be one of {RULES}")
+        if self.rule == "essentials_first" and self.essential_spending is None:
+            raise ValueError("the essentials_first rule needs essential_spending")
+        if self.essential_spending is not None and not 0 <= self.essential_spending <= self.annual_spending:
+            raise ValueError("essential_spending must be between 0 and annual_spending")
+        if self.surplus_income not in ("reinvest", "spend"):
+            raise ValueError("surplus_income must be 'reinvest' or 'spend'")
+        if not 0.0 <= self.fee < 0.2:
+            raise ValueError("fee must be between 0 and 20% a year")
         if not 0.0 <= self.stock_share <= 1.0:
             raise ValueError("stock_share must be between 0 and 1")
         if not 0.0 <= self.spending_floor <= 1.0:
@@ -103,6 +135,20 @@ class RetirementPlan:
             raise ValueError("annuity premiums exceed the starting portfolio")
         if self.n_years < 1:
             raise ValueError("the simulation needs at least one year")
+
+    @property
+    def floor_amount(self) -> float:
+        """Lowest acceptable yearly spending in dollars: the essentials if given, else the floor share."""
+        if self.essential_spending is not None:
+            return float(self.essential_spending)
+        return self.spending_floor * self.annual_spending
+
+    @property
+    def discretionary_spending(self) -> float:
+        """Planned discretionary spending (0 if spending isn't split)."""
+        if self.essential_spending is None:
+            return 0.0
+        return self.annual_spending - self.essential_spending
 
     @property
     def n_years(self) -> int:
@@ -163,17 +209,17 @@ class Estimate:
 
 
 def estimate_mean(x: np.ndarray, antithetic: bool = False) -> Estimate:
-    """Monte Carlo estimate of E[x] with SE and 95% CI.
+    """Monte Carlo estimate of E[x] with SE and a normal-approximation 95% CI.
 
-    Plain Monte Carlo: paths are i.i.d., so SE = sd(x) / sqrt(N). For a 0/1
-    indicator this is the familiar sqrt(p (1 - p) / N).
+    Plain Monte Carlo: paths are i.i.d., so SE = sd(x) / sqrt(N).
 
     Antithetic variates: the two paths in a pair are *not* independent, so the
     right unit is the pair. Average each pair and take the SE of those N/2 pair
     averages. If mirrored paths are negatively correlated, the pair averages
     vary less and the SE shrinks.
 
-    Works for indicators and for paired differences between two plans.
+    Use this for paired differences and antithetic runs; for a plain 0/1
+    success indicator, :func:`estimate_proportion` gives a better interval.
     """
     x = np.asarray(x, dtype=float)
     n = x.size
@@ -185,6 +231,47 @@ def estimate_mean(x: np.ndarray, antithetic: bool = False) -> Estimate:
     else:
         se = se_plain
     return Estimate(p, se, p - 1.96 * se, p + 1.96 * se, se_plain)
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score interval for a binomial proportion.
+
+    The usual p +/- 1.96 SE interval collapses to a single point when every
+    path succeeds (or every path fails), claiming zero uncertainty, and can
+    spill outside [0, 1] near the edges. Wilson inverts the score test
+    instead, which keeps the interval inside [0, 1] and honest at the extremes:
+
+        center = (p + z^2 / 2n) / (1 + z^2 / n)
+        half   = z / (1 + z^2 / n) * sqrt(p (1 - p) / n + z^2 / 4n^2)
+
+    Near the middle (p around 0.1 to 0.9 with large n) it matches the normal
+    interval to within a few hundredths of a point.
+    """
+    if n == 0:
+        return 0.0, 1.0
+    p = successes / n
+    denom = 1.0 + z**2 / n
+    center = (p + z**2 / (2 * n)) / denom
+    half = z / denom * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2))
+    return float(max(0.0, center - half)), float(min(1.0, center + half))
+
+
+def estimate_proportion(success: np.ndarray, antithetic: bool = False) -> Estimate:
+    """Estimate a probability from 0/1 outcomes.
+
+    Independent paths get a Wilson interval. Antithetic pairs are not
+    independent Bernoulli trials, so they keep the pair-based interval from
+    :func:`estimate_mean`.
+    """
+    x = np.asarray(success, dtype=float)
+    if antithetic:
+        e = estimate_mean(x, antithetic=True)
+        return Estimate(e.p, e.se, max(0.0, e.ci_low), min(1.0, e.ci_high), e.se_plain)
+    n, k = x.size, int(x.sum())
+    p = k / n
+    se = float(np.sqrt(p * (1 - p) / n))
+    lo, hi = wilson_interval(k, n)
+    return Estimate(p, se, lo, hi, se)
 
 
 @dataclass
@@ -243,9 +330,32 @@ class SimulationResult:
         return low / self.plan.annual_spending
 
     @property
+    def floor_met(self) -> np.ndarray:
+        """True where actual spending never fell below the floor (the essentials, if set)."""
+        if self.plan.annual_spending == 0:
+            return np.ones(self.lifespan.size, dtype=bool)
+        return self.lowest_spending >= self.plan.floor_amount / self.plan.annual_spending - 1e-12
+
+    @property
     def success(self) -> np.ndarray:
         """Funded every year *and* spending never fell below the plan's floor."""
-        return self.funded & (self.lowest_spending >= self.plan.spending_floor - 1e-12)
+        return self.funded & self.floor_met
+
+    @property
+    def share_years_below_plan(self) -> np.ndarray:
+        """Per path: share of years lived in which spending was below the original goal."""
+        below = (self.consumption < self.plan.annual_spending * (1 - 1e-9)) & self.alive
+        return below.sum(axis=1) / np.maximum(self.alive.sum(axis=1), 1)
+
+    @property
+    def discretionary_share(self) -> np.ndarray:
+        """Per path: discretionary spending actually enjoyed over the years lived,
+        as a share of the planned discretionary budget (can exceed 1 after raises)."""
+        d0 = self.plan.discretionary_spending
+        if d0 <= 0:
+            return np.full(self.lifespan.size, np.nan)
+        spent = np.where(self.alive, np.maximum(self.consumption - self.plan.essential_spending, 0.0), 0.0)
+        return spent.sum(axis=1) / (d0 * self.alive.sum(axis=1))
 
     @property
     def beyond_horizon(self) -> np.ndarray:
@@ -273,7 +383,7 @@ class SimulationResult:
     # ---- estimation -----------------------------------------------------
     def success_probability(self) -> Estimate:
         """Estimate P(success) with a standard error and 95% confidence interval."""
-        return estimate_mean(self.success, self.config.antithetic)
+        return estimate_proportion(self.success, self.config.antithetic)
 
     def percentiles(self, qs=(10, 25, 50, 75, 90)) -> np.ndarray:
         """Balance percentiles by year, shape ``(len(qs), n_years + 1)``."""
@@ -292,7 +402,11 @@ class SimulationResult:
             "ci_high": est.ci_high,
             "funded": float(self.funded.mean()),
             "p_any_cut": float(cut.mean()),
-            "p_below_floor": float((low < self.plan.spending_floor - 1e-12).mean()),
+            "p_below_floor": float((~self.floor_met).mean()),
+            "floor_met": float(self.floor_met.mean()),
+            "share_years_below_plan": float(self.share_years_below_plan.mean()),
+            "median_discretionary_share": float(np.nanmedian(self.discretionary_share))
+            if self.plan.discretionary_spending > 0 else None,
             "median_lowest_spending": float(np.median(low)),
             "median_terminal": float(np.median(self.terminal_wealth)),
             "p10_terminal": float(np.percentile(self.terminal_wealth, 10)),
@@ -337,8 +451,11 @@ def run_paths(
     consumption = np.empty((n_paths, n_years))
     target = np.empty((n_paths, n_years))
 
+    reinvest = plan.surplus_income == "reinvest"
+    essentials = plan.essential_spending
+
     for t in range(n_years):
-        if plan.rule == "guardrails" and t > 0 and b0 > 0:
+        if plan.rule != "fixed" and t > 0 and b0 > 0:
             # Reference rate: the withdrawal rate the original plan implies for
             # *this* year's income mix. Comparing against it (instead of the
             # year-0 rate) keeps a Social Security start date from looking like
@@ -350,26 +467,44 @@ def run_paths(
                     rate = np.where(balance > 0, need / balance, np.inf)
                 cut = (rate > UPPER_GUARDRAIL * reference) & (n_years - t > NO_CUTS_FINAL_YEARS)
                 rise = rate < LOWER_GUARDRAIL * reference
-                spending = np.where(cut, spending * (1 - CUT), np.where(rise, spending * (1 + RAISE), spending))
+                if plan.rule == "guardrails":
+                    cut_to = spending * (1 - CUT)
+                else:
+                    # Same dollar cut, taken from discretionary spending only.
+                    cut_to = np.maximum(spending - CUT * spending, essentials)
+                spending = np.where(cut, cut_to, np.where(rise, spending * (1 + RAISE), spending))
 
         need = np.maximum(spending - income[t], 0.0)
         withdrawal = np.minimum(need, balance)          # cannot take more than is there
+        surplus = np.maximum(income[t] - spending, 0.0) if reinvest else 0.0
         alive = lifespans > t
         short = (balance < need) & alive & (fail_year == 0)
         fail_year[short] = t + 1
 
-        consumption[:, t] = income[t] + withdrawal
+        if reinvest:
+            consumption[:, t] = np.minimum(spending, income[t] + withdrawal)
+        else:
+            consumption[:, t] = income[t] + withdrawal
         target[:, t] = spending
-        balance = (balance - withdrawal) * (1.0 + portfolio_returns[:, t])
+        balance = (balance - withdrawal + surplus) * (1.0 + portfolio_returns[:, t])
         balances[:, t + 1] = balance
 
     return {"balances": balances, "consumption": consumption, "target": target, "fail_year": fail_year}
 
 
 def portfolio_returns_for(plan: RetirementPlan, stock: np.ndarray, bond: np.ndarray) -> np.ndarray:
-    """Net portfolio return with annual rebalancing: w * r_s + (1 - w) * r_b - fee."""
+    """Net portfolio return with annual rebalancing and a fee charged on assets.
+
+        gross = w * r_s + (1 - w) * r_b
+        net   = (1 + gross) * (1 - fee) - 1
+
+    Charging the fee as a share of the balance (rather than subtracting it
+    from the return) means a fee can never push a portfolio below zero, even
+    in a year when markets lose almost everything.
+    """
     w = plan.stock_share
-    return w * stock + (1.0 - w) * bond - plan.fee
+    gross = w * stock + (1.0 - w) * bond
+    return (1.0 + gross) * (1.0 - plan.fee) - 1.0
 
 
 def lifespan_uniforms(config: SimulationConfig) -> np.ndarray:

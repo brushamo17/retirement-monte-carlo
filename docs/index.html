@@ -221,6 +221,17 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
         <div class="field-row"><label for="fee">Annual fees</label><span class="val" id="feeOut"></span></div>
         <input type="range" id="fee" min="0" max="2" step="0.05" value="0.5">
       </div>
+      <div class="field">
+        <label for="target">Your target success rate</label>
+        <select id="target">
+          <option value="0.75">75%</option>
+          <option value="0.8">80%</option>
+          <option value="0.85">85%</option>
+          <option value="0.9" selected>90%</option>
+          <option value="0.95">95%</option>
+        </select>
+        <span class="hint">There is no universally right number; planners commonly aim for somewhere between 75% and 95%.</span>
+      </div>
     </div>
 
     <div class="group">
@@ -275,10 +286,11 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
   <main class="results">
     <section class="panel verdict" aria-label="Summary">
       <div class="tile hero">
-        <span class="k">Probability the money lasts</span>
+        <span class="k">Estimated success under these assumptions</span>
         <span class="v" id="tSucc">–</span>
         <span class="pill" id="tPill">–</span>
         <span class="s" id="tSuccSub"></span>
+        <span class="s" id="tAlt"></span>
       </div>
       <div class="tile">
         <span class="k">Median ending balance</span>
@@ -361,11 +373,11 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
         </div>
         <div>
           <h3>Spending</h3>
-          <p>Withdrawals come out at the start of each year in today’s dollars, so the fixed rule is the inflation-adjusted “4% rule” framing. A path fails in the first year the balance cannot cover that year’s withdrawal, or if spending ever falls below 80% of the starting amount. Guardrails follow a simplified Guyton–Klinger rule: if the current withdrawal rate drifts 20% above the starting rate, spending is cut 10% (skipped in the final 15 years); if it drifts 20% below, spending rises 10%.</p>
+          <p>Fees are charged on assets each year. Withdrawals come out at the start of each year in today’s dollars, so the fixed rule is the inflation-adjusted “4% rule” framing. A path fails in the first year the balance cannot cover that year’s withdrawal, or if spending ever falls below 80% of the starting amount. Guardrails follow a simplified Guyton–Klinger rule: if the current withdrawal rate drifts 20% above the starting rate, spending is cut 10% (skipped in the final 15 years); if it drifts 20% below, spending rises 10%.</p>
         </div>
         <div>
           <h3>Estimation</h3>
-          <p>Success probability is <span class="mono">p̂ = successes ⁄ N</span>, with standard error <span class="mono">√(p̂(1−p̂)⁄N)</span> and a 95% interval of ±1.96 SE. With antithetic variates on, the SE comes from the variance of pair averages over N⁄2 pairs. A seeded generator (Mulberry32 with Box–Muller normals) makes every run reproducible.</p>
+          <p>Success probability is <span class="mono">p̂ = successes ⁄ N</span>, with standard error <span class="mono">√(p̂(1−p̂)⁄N)</span> and a 95% Wilson score interval, which stays honest even when every path succeeds. With antithetic variates on, the SE and interval come from the variance of pair averages over N⁄2 pairs. The interval covers sampling error only, not uncertainty about the assumptions themselves. A seeded generator (Mulberry32 with Box–Muller normals) makes every run reproducible.</p>
         </div>
         <div>
           <h3>Not modeled</h3>
@@ -442,6 +454,8 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       rho: Math.max(-0.95, Math.min(0.95, num("rho", 0.1))),
       N: parseInt($("nsim").value, 10),
       seed: Math.round(num("seed", 3044)),
+      target: num("target", 0.9),
+      preset: $("preset").value,
       anti: $("anti").checked
     };
   }
@@ -485,10 +499,10 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
   }
 
   // ---------- return generation (cached; common random numbers) ----------
-  let cache = { key: null };
-  function getReturns(c) {
+  const mainCache = { key: null }, altCache = { key: null };
+  function getReturns(c, store = mainCache) {
     const key = [c.N, c.T, c.seed, c.model, c.ms, c.ss, c.mb, c.sb, c.rho, c.anti].join("|");
-    if (cache.key === key) return cache;
+    if (store.key === key) return store;
     const { N, T } = c, model = c.model;
     const Rs = new Float64Array(N * T), Rb = new Float64Array(N * T);
     const rng = mulberry32(c.seed), nrm = makeNormal(rng);
@@ -510,8 +524,8 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
         }
       }
     }
-    cache = { key, Rs, Rb, N, T };
-    return cache;
+    Object.assign(store, { key, Rs, Rb, N, T });
+    return store;
   }
 
   // ---------- one retirement path ----------
@@ -536,7 +550,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
         break;
       }
       if (W < minW) minW = W;          // spending actually funded this year
-      const r = w * Rs[off + t] + (1 - w) * Rb[off + t] - fee;
+      const r = (1 + w * Rs[off + t] + (1 - w) * Rb[off + t]) * (1 - fee) - 1;   // fee charged on assets
       B = (B - W) * (1 + r);
       if (bal) bal[boff + t + 1] = B;
     }
@@ -554,6 +568,23 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       se = Math.sqrt(ss / (M - 1) / M);
     } else se = Math.sqrt(p * (1 - p) / N);
     return { p, se, naive: Math.sqrt(p * (1 - p) / N) };
+  }
+
+  // Wilson score interval: stays inside [0, 1] and never claims zero uncertainty at 0% or 100%.
+  function wilson(p, n, z = 1.96) {
+    const d = 1 + (z * z) / n, center = (p + (z * z) / (2 * n)) / d;
+    const half = (z / d) * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
+    return [Math.max(0, center - half), Math.min(1, center + half)];
+  }
+
+  // Success rate of the same plan under a different set of market assumptions (same seed and settings).
+  function altSuccess(c) {
+    const alt = c.preset === "low" ? PRESETS.hist : PRESETS.low;
+    const ac = { ...c, ms: alt.ms / 100, ss: alt.ss / 100, mb: alt.mb / 100, sb: alt.sb / 100, rho: alt.rho };
+    const R = getReturns(ac, altCache), w = c.stock / 100, guard = c.rule === "guard";
+    let ok = 0;
+    for (let i = 0; i < c.N; i++) { runPath(R.Rs, R.Rb, i * c.T, c.T, w, c.fee, c.rate, guard, null, 0); ok += OUT.ok; }
+    return { p: ok / c.N, label: c.preset === "low" ? "US history 1928–2025 assumptions" : "muted forward-looking assumptions" };
   }
 
   function quantileSorted(a, q) { return a[Math.min(a.length - 1, Math.max(0, Math.floor(q * (a.length - 1))))]; }
@@ -593,7 +624,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
     for (let i = 0; i < N; i++) {
       let a = 0, b = 0, s = 0; const off = i * T;
       for (let t = 0; t < T; t++) {
-        const lr = Math.log(Math.max(1e-9, 1 + w * R.Rs[off + t] + (1 - w) * R.Rb[off + t] - c.fee));
+        const lr = Math.log(Math.max(1e-9, (1 + w * R.Rs[off + t] + (1 - w) * R.Rb[off + t]) * (1 - c.fee)));
         s += lr; if (t < L) a += lr; if (t >= T - L) b += lr;
       }
       first[i] = a / L; last[i] = b / L; whole[i] = s / T;
@@ -613,7 +644,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
     // median-return path, reordered
     const order = Array.from({ length: N }, (_, i) => i).sort((x, y) => whole[x] - whole[y]);
     const mid = order[Math.floor(N / 2)];
-    const rets = []; for (let t = 0; t < T; t++) rets.push(w * R.Rs[mid * T + t] + (1 - w) * R.Rb[mid * T + t] - c.fee);
+    const rets = []; for (let t = 0; t < T; t++) rets.push((1 + w * R.Rs[mid * T + t] + (1 - w) * R.Rb[mid * T + t]) * (1 - c.fee) - 1);
     const variants = [rets.slice().sort((a, b) => a - b), rets.slice(), rets.slice().sort((a, b) => b - a)].map((r) => {
       const arr = Float64Array.from(r), b = new Float64Array(T + 1);
       runPath(arr, arr, 0, T, 1, 0, c.rate, guard, b, 0);
@@ -794,12 +825,12 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
   function renderSummary(res) {
     const { c, st, endSorted, failsSorted, minWSorted, cuts, below } = res, S = c.S, N = c.N;
     $("tSucc").textContent = pct(st.p);
-    const pill = $("tPill");
-    if (st.p >= 0.85) { pill.className = "pill good"; pill.textContent = "Comfortable"; }
-    else if (st.p >= 0.70) { pill.className = "pill warn"; pill.textContent = "Watch closely"; }
-    else { pill.className = "pill crit"; pill.textContent = "At risk"; }
-    const lo = Math.max(0, st.p - 1.96 * st.se), hi = Math.min(1, st.p + 1.96 * st.se);
-    let sub = `95% CI ${pct(lo)}–${pct(hi)} · SE ${pct(st.se, 2)} over ${N.toLocaleString()} paths`;
+    const pill = $("tPill"), tgt = Math.round(c.target * 100);
+    if (st.p >= c.target) { pill.className = "pill good"; pill.textContent = `At or above your ${tgt}% target`; }
+    else { pill.className = "pill warn"; pill.textContent = `Below your ${tgt}% target`; }
+    // Wilson interval for independent paths; pair-based normal interval for antithetic pairs.
+    const [lo, hi] = c.anti ? [Math.max(0, st.p - 1.96 * st.se), Math.min(1, st.p + 1.96 * st.se)] : wilson(st.p, N);
+    let sub = `95% CI ${pct(lo)}–${pct(hi)} (sampling error only) · SE ${pct(st.se, 2)} over ${N.toLocaleString()} paths`;
     if (c.anti && st.naive > 0) sub += ` · antithetic SE ${st.se < st.naive ? Math.round((1 - st.se / st.naive) * 100) + "% below" : "not below"} plain MC`;
     $("tSuccSub").textContent = sub;
     $("tMed").textContent = money(quantileSorted(endSorted, 0.5) * S);
@@ -886,6 +917,8 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
     const res = simulate(c, R);
     last = res;
     renderSummary(res); renderFan(res); renderSeq(res); renderQuint(res); renderInsights(res);
+    const alt = altSuccess(c);
+    $("tAlt").textContent = `Under ${alt.label}: ${pct(alt.p)}. Changing the assumptions moves this estimate far more than sampling error does.`;
     clearTimeout(heatTimer);
     const needs = heatCache.key !== R.key + "|" + c.fee + "|" + c.rule;
     if (needs) $("heatStatus").textContent = "Updating the grid…";
@@ -900,7 +933,7 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
   applyPreset("hist");
   $("preset").addEventListener("change", (e) => { applyPreset(e.target.value); schedule(0); });
   ["ms", "ss", "mb", "sb", "rho"].forEach((id) => $(id).addEventListener("input", () => { $("preset").value = "custom"; schedule(); }));
-  ["start", "rate", "years", "stock", "fee", "nsim", "seed", "anti"].forEach((id) => $(id).addEventListener("input", () => schedule()));
+  ["start", "rate", "years", "stock", "fee", "target", "nsim", "seed", "anti"].forEach((id) => $(id).addEventListener("input", () => schedule()));
   document.querySelectorAll('input[name=rule], input[name=model]').forEach((r) => r.addEventListener("change", () => schedule(0)));
 
   let rw = 0;

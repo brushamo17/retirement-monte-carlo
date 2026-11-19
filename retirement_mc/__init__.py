@@ -34,6 +34,7 @@ from .simulation import (
     SimulationConfig,
     SimulationResult,
     estimate_mean,
+    estimate_proportion,
     run_paths,
     simulate,
 )
@@ -42,7 +43,7 @@ __all__ = [
     "Annuity", "Estimate", "GompertzMortality", "HISTORICAL_US", "IncomeStream",
     "MUTED_FORWARD", "MarketAssumptions", "MarketHistory", "RetirementPlan",
     "SimulationConfig", "SimulationResult", "annuity_factor", "compare_scenarios",
-    "estimate_mean", "generate_returns", "historical_backtest", "load_us_history",
+    "estimate_mean", "estimate_proportion", "generate_returns", "historical_backtest", "load_us_history",
     "paired_difference", "price_payout_rate", "reorder_demo", "run_paths",
     "sequence_quintiles", "simulate", "social_security", "social_security_factor",
     "success_grid",

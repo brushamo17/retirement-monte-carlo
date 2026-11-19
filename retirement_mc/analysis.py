@@ -174,8 +174,8 @@ def historical_backtest(plan: RetirementPlan, history: MarketHistory | None = No
     infl = h.inflation.mean() if inflation is None else inflation
     income = plan.income_schedule(infl)
     out = run_paths(plan, port, np.full(len(starts), float(n_years)), income)
-    low = np.min(out["consumption"], axis=1) / plan.annual_spending if plan.annual_spending else np.ones(len(starts))
-    ok = (out["fail_year"] == 0) & (low >= plan.spending_floor - 1e-12)
+    low = np.min(out["consumption"], axis=1)
+    ok = (out["fail_year"] == 0) & (low >= plan.floor_amount - 1e-9)
     return {
         "start_years": starts,
         "success": ok,

@@ -235,3 +235,83 @@ def test_default_horizon_is_long_enough():
         warnings.simplefilter("error")
         res = simulate(RetirementPlan(mortality=GompertzMortality()), FAST)
     assert res.beyond_horizon.sum() == 0
+
+
+# ---- fees, surplus income, confidence intervals ---------------------------
+
+def test_fee_is_charged_on_assets_and_cannot_push_a_balance_negative():
+    """A 99% crash plus a 2% fee used to give a return below -100%."""
+    plan = RetirementPlan(initial_portfolio=100_000, annual_spending=1_000, fee=0.02, horizon_years=5)
+    crash = np.full((4, 5), -0.99)
+    res = simulate(plan, SimulationConfig(n_paths=4), returns=(crash, crash))
+    assert np.all(res.balances >= 0)
+    assert np.all(res.consumption >= 0)
+    gross = 0.05
+    flat = np.full((4, 5), gross)
+    net = simulate(plan, SimulationConfig(n_paths=4), returns=(flat, flat)).portfolio_returns
+    assert np.allclose(net, (1 + gross) * (1 - 0.02) - 1)
+
+
+@pytest.mark.parametrize("fee", [-0.01, 0.2, 0.5])
+def test_unreasonable_fees_are_rejected(fee):
+    with pytest.raises(ValueError):
+        RetirementPlan(fee=fee)
+
+
+def test_surplus_income_is_reinvested_by_default_or_spent_if_asked():
+    pension = IncomeStream("Pension", 50_000)
+    zero = np.zeros((2, 3))
+    kw = dict(initial_portfolio=100_000, annual_spending=40_000, income=(pension,), fee=0.0, horizon_years=3)
+    saved = simulate(RetirementPlan(**kw), SimulationConfig(n_paths=2), returns=(zero, zero))
+    spent = simulate(RetirementPlan(**kw, surplus_income="spend"), SimulationConfig(n_paths=2), returns=(zero, zero))
+    assert np.allclose(saved.consumption, 40_000)
+    assert np.allclose(saved.balances[0], [100_000, 110_000, 120_000, 130_000])
+    assert np.allclose(spent.consumption, 50_000)
+    assert np.allclose(spent.balances[0], 100_000)
+
+
+def test_wilson_interval_never_claims_zero_uncertainty():
+    from retirement_mc.simulation import estimate_proportion, wilson_interval
+    lo, hi = wilson_interval(10_000, 10_000)
+    assert hi == pytest.approx(1.0) and 0.999 < lo < 1.0
+    lo0, hi0 = wilson_interval(0, 10_000)
+    assert lo0 == pytest.approx(0.0) and 0.0 < hi0 < 0.001
+    # Near the middle it agrees with the normal interval.
+    e = estimate_proportion(np.r_[np.ones(9_000), np.zeros(1_000)])
+    assert e.ci_low == pytest.approx(0.9 - 1.96 * e.se, abs=2e-4)
+    assert e.ci_high == pytest.approx(0.9 + 1.96 * e.se, abs=2e-4)
+
+
+# ---- essential vs discretionary spending ------------------------------------
+
+ESS = dict(initial_portfolio=1_000_000, annual_spending=60_000, essential_spending=40_000)
+
+
+def test_essentials_first_needs_an_essential_budget():
+    with pytest.raises(ValueError):
+        RetirementPlan(rule="essentials_first")
+    with pytest.raises(ValueError):
+        RetirementPlan(annual_spending=40_000, essential_spending=50_000)
+
+
+def test_essentials_first_never_cuts_below_the_essentials():
+    res = simulate(RetirementPlan(**ESS, rule="essentials_first"), FAST)
+    assert np.all(res.target >= 40_000 - 1e-6)
+    cut_all = simulate(RetirementPlan(**ESS, rule="guardrails"), FAST)
+    assert np.any(cut_all.target < 40_000)          # the plain rule does cut into essentials
+    assert res.floor_met.mean() > cut_all.floor_met.mean()
+
+
+def test_essentials_are_the_floor_when_given():
+    """With essentials set, spending at 70% of the plan is fine as long as essentials are met."""
+    plan = RetirementPlan(**ESS)
+    assert plan.floor_amount == 40_000
+    assert RetirementPlan(annual_spending=60_000).floor_amount == pytest.approx(48_000)
+
+
+def test_discretionary_share_is_full_when_the_fixed_plan_never_fails():
+    res = simulate(RetirementPlan(initial_portfolio=1_000_000, annual_spending=30_000,
+                                  essential_spending=20_000, horizon_years=20), FAST)
+    ok = res.funded
+    assert np.allclose(res.discretionary_share[ok], 1.0)
+    assert np.all(res.discretionary_share[~ok] < 1.0)

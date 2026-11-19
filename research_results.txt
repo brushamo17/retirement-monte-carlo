@@ -3,25 +3,37 @@
 A. Model risk: success of a 60/40, 30-year plan by withdrawal rate
 ==============================================================================
 model                                             3.0%    3.5%    4.0%    4.5%    5.0%
-Lognormal (1928-2025 calibration)                98.2%   94.9%   89.3%   81.2%   70.6%
-Fat-tailed (1928-2025 calibration)               98.3%   95.2%   89.8%   81.8%   71.0%
-Block bootstrap of 1928-2025                     98.7%   95.9%   90.2%   81.6%   70.8%
-Lognormal (muted forward-looking)                93.7%   85.3%   73.0%   58.3%   43.3%
+Lognormal (1928-2025 calibration)                98.2%   94.9%   89.3%   81.0%   70.4%
+Fat-tailed (1928-2025 calibration)               98.3%   95.2%   89.8%   81.7%   70.9%
+Block bootstrap of 1928-2025                     98.8%   95.9%   90.2%   81.5%   70.6%
+Lognormal (muted forward-looking)                93.7%   85.3%   72.9%   58.1%   43.0%
 Historical 30-year windows (69, overlapping)    100.0%  100.0%   89.9%   75.4%   65.2%
 
 At 4%, the models span 17.2 percentage points.
 
 Bootstrap block length (4% rule): longer blocks keep more multi-year history
-   1-year blocks: 87.6% (95% CI 87.3% to 87.9%, SE 0.15%)
-   5-year blocks: 90.2% (95% CI 90.0% to 90.5%, SE 0.13%)
+   1-year blocks: 87.6% (95% CI 87.3% to 87.8%, SE 0.15%)
+   5-year blocks: 90.2% (95% CI 89.9% to 90.4%, SE 0.13%)
   10-year blocks: 88.6% (95% CI 88.3% to 88.9%, SE 0.14%)
+
+==============================================================================
+A2. Sensitivity: change one assumption at a time (4% rule, 60/40, 30 years)
+==============================================================================
+assumption changed                              success    change
+Historical assumptions (baseline)                 89.3%     +0.0pp
+Expected returns lowered only (5.5% / 1.5%)       67.9%    -21.4pp
+Volatility lowered only (17% / 6%)                93.7%     +4.4pp
+Correlation raised only (0.20)                    88.2%     -1.0pp
+All muted assumptions together                    72.9%    -16.3pp
+Inflation is left out: it only affects nominal income, and this plan has none.
+Every row uses the same random draws (CRN), so the changes are not sampling noise.
 
 ==============================================================================
 B. Monte Carlo convergence (4% rule, lognormal)
 ==============================================================================
     paths   success        SE                95% CI
-    1,000     90.4%     0.93pp        88.6% to 92.2%
-   10,000     89.5%     0.31pp        88.8% to 90.1%
+    1,000     90.4%     0.93pp        88.4% to 92.1%
+   10,000     89.4%     0.31pp        88.8% to 90.0%
   100,000     89.1%     0.10pp        88.9% to 89.3%
 SE falls 89% from 1,000 to 100,000 paths (theory: 1 - 1/sqrt(100) = 90%).
 
@@ -30,20 +42,20 @@ C. What guardrails cost (4% start, 60/40, 30 years)
 ==============================================================================
 rule       market                     never ran out  success*  any cut  <80% of plan  median low
 fixed      1928-2025                          89.3%     89.3%     0.0%         10.5%      40,000
-guardrails 1928-2025                          99.7%     75.4%    54.5%         24.6%      36,000
-fixed      muted forward                      73.0%     73.0%     0.0%         26.4%      40,000
-guardrails muted forward                      99.1%     58.5%    71.6%         41.5%      32,400
+guardrails 1928-2025                          99.7%     75.3%    54.5%         24.7%      36,000
+fixed      muted forward                      72.9%     72.9%     0.0%         26.5%      40,000
+guardrails muted forward                      99.1%     58.4%    71.7%         41.6%      32,400
 * success = never ran out AND spending never fell below 80% of the original $40,000
 
 ==============================================================================
 D. Annuity trade-off, paired comparison (age 65, $1M, $80k spending, SS $32k at 67)
 ==============================================================================
                                   success   median left  floor if short
-No annuity                          85.0%       753,032             40%
-$300k inflation-adjusted SPIA       88.2%       563,574             62%
+No annuity                          84.9%       747,847             40%
+$300k inflation-adjusted SPIA       88.2%       559,994             62%
 
-Paired improvement in success: 3.26 pp (95% CI 3.11 to 3.42 pp)
-SE of the difference: 0.079 pp paired vs 0.215 pp if the runs were independent (7x fewer paths needed for the same precision).
+Paired improvement in success: 3.25 pp (95% CI 3.09 to 3.40 pp)
+SE of the difference: 0.079 pp paired vs 0.216 pp if the runs were independent (7x fewer paths needed for the same precision).
 
 ==============================================================================
 E. Historical backtest: 4% rule, 60/40, every 30-year retirement starting 1928-1996
@@ -51,3 +63,20 @@ E. Historical backtest: 4% rule, 60/40, every 30-year retirement starting 1928-1
 Success in 62 of 69 start years (90%).
 Failed start years: 1962, 1964, 1965, 1966, 1967, 1968, 1969
 Lowest ending balances: 1964 ($0), 1969 ($0), 1968 ($0), 1967 ($0), 1966 ($0)
+
+==============================================================================
+F. Essential vs discretionary spending (age 65, $1M, $80k = $52k essential + $28k discretionary, SS $32k at 67)
+==============================================================================
+'Floor and upside' buys a $348,000 inflation-adjusted SPIA paying $19,986/yr, so annuity + Social Security cover the essentials from 67.
+
+strategy                       essentials never ran years below discretionary  median left
+                                  covered       out   full plan       enjoyed     at death
+Fixed spending                      85.8%     84.9%          4%          100%      747,847
+Guardrails (cut everything)         89.4%    100.0%         50%           87%      878,584
+Essentials-first guardrails         99.7%     99.7%         50%           87%      878,423
+Floor and upside                   100.0%    100.0%         51%           93%      608,402
+
+Essentials-first vs cut-everything guardrails, success (essentials always covered and never ran out): +10.3 pp (95% CI +10.0 to +10.6)
+essentials covered = actual spending never fell below $52k in any year lived
+years below full plan = average share of years lived with spending under $80k
+discretionary enjoyed = median share of the planned $28k/yr actually spent over a lifetime

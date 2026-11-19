@@ -12,13 +12,13 @@
 
 **Key findings** (10,000+ simulated retirements; returns calibrated to US data for 1928–2025)
 
-- The classic 4% rule (60/40, 30 years) succeeds **89.5%** of the time (95% CI 88.8–90.1%). Three different return models fitted to history agree within a point, and the rule survived 62 of the 69 actual 30-year retirements since 1928. Every failure started between 1962 and 1969.
-- **The assumptions matter more than the model.** Lower forward-looking return assumptions cut that 89.5% to 73%. That gap is more than 50 times the Monte Carlo standard error.
+- The classic 4% rule (60/40, 30 years) succeeds **89.4%** of the time (95% CI 88.8–90.0%). Three different return models fitted to history agree within a point, and the rule survived 62 of the 69 actual 30-year retirements since 1928. Every failure started between 1962 and 1969.
+- **The assumptions matter more than the model.** Lowering expected returns alone (stocks 5.5%, bonds 1.5%) cuts success from 89% to 68%, a gap about 70 times the Monte Carlo standard error at 10,000 paths. A full "muted" scenario lands at 73% because its lower volatility wins some of that back.
 - **Sequence risk dominates:** when the first decade's returns land in the worst fifth, only 56% of portfolios last, versus 100% in the best fifth. Bad returns in the last decade barely matter (87% vs 92%).
-- **Guardrails have a hidden cost.** Flexible spending almost never runs out of money (99.7%), but 1 in 4 retirees see spending fall below 80% of the plan along the way.
-- An inflation-adjusted annuity cuts the chance of running short from 15.0% to 11.8% and raises the spending floor from 40% to 62% of the goal, at the cost of a smaller bequest.
+- **Guardrails have a hidden cost.** Flexible spending almost never runs out of money (99.7%), but 1 in 4 retirees see spending fall below 80% of the plan along the way. Taking the cuts from discretionary spending first keeps essentials covered in **99.7%** of retirements instead of 89%, at almost no cost in lifetime discretionary spending.
+- An inflation-adjusted annuity cuts the chance of running short from 15.1% to 11.9% and raises the spending floor from 40% to 62% of the goal, at the cost of a smaller bequest.
 
-The browser demo covers the core model; the Python package adds Social Security, pensions, annuities, random lifespans and the historical bootstrap. The project applies the simulation methods from Georgia Tech's ISyE 3044 to the retirement-income questions at the core of financial planning.
+The browser demo covers the core model; the Python package adds Social Security, pensions, annuities, random lifespans, essential vs discretionary spending and the historical bootstrap. The project applies the simulation methods from Georgia Tech's ISyE 3044 to the retirement-income questions at the core of financial planning.
 
 ---
 
@@ -33,7 +33,7 @@ pip install -r requirements.txt
 
 python run_example.py              # prints the results below, saves the charts to figures/
 python research.py                 # robustness experiments (about a minute)
-pytest -q                          # 33 tests
+pytest -q                          # 43 tests
 ```
 
 Minimal use:
@@ -48,7 +48,7 @@ plan = RetirementPlan(
     income=(social_security(32_000, claim_age=67, retirement_age=65),),
 )
 result = simulate(plan, SimulationConfig(n_paths=10_000, seed=3044))
-print(result.success_probability())   # 67.7% (95% CI 66.8% to 68.6%, ...)
+print(result.success_probability())   # 67.5% (95% CI 66.6% to 68.5%, ...)
 ```
 
 ---
@@ -76,13 +76,13 @@ All figures come from `python run_example.py` (10,000 paths, seed 3044, lognorma
 
 | | Probability of success |
 |---|---|
-| Plain Monte Carlo | **89.5%** (95% CI 88.8% to 90.1%) |
-| Antithetic variates | 89.4% (SE 0.29% vs 0.31% plain) |
+| Plain Monte Carlo | **89.4%** (95% CI 88.8% to 90.0%) |
+| Antithetic variates | 89.3% (SE 0.29% vs 0.31% plain) |
 | Fat-tailed returns (two-regime mixture) | 89.6% |
 | Historical block bootstrap | 90.0% |
-| Guardrails spending rule | 75.3%: never ran out in 99.6% of paths, but spending fell below 80% of the plan in 24.7% |
+| Guardrails spending rule | 75.2%: never ran out in 99.6% of paths, but spending fell below 80% of the plan in 24.7% |
 
-The browser version, written separately in JavaScript with a different random number generator, gets 89.0% for the same inputs. That's within sampling error of 89.5%, a useful check that neither implementation has a bug.
+The browser version, written separately in JavaScript with a different random number generator, gets 89.0% for the same inputs, within sampling error of 89.4%. Agreement like this catches many kinds of bugs, such as a wrong formula or an off-by-one year, but it can't prove there are none: both versions share the same design and assumptions.
 
 ![Fan chart](figures/fan_chart.png)
 
@@ -96,7 +96,7 @@ Above about a 4% withdrawal rate, more stocks help, because the portfolio needs 
 
 ### 3. Sequence-of-returns risk
 
-The path with the median 30-year return (4.7% a year) replayed in three orders. Reordering doesn't change the average return at all, because multiplication commutes. It changes everything else:
+The path with the median 30-year return (4.6% a year) replayed in three orders. Reordering doesn't change the average return at all, because multiplication commutes. It changes everything else:
 
 ![Sequence risk](figures/sequence_risk.png)
 
@@ -115,11 +115,11 @@ Annuity prices come from the same mortality model: a fixed immediate annuity (SP
 
 | Scenario | Chance of running short | Median left at death | Spending floor if short |
 |---|---|---|---|
-| Social Security at 67 | 15.0% | $736k | 40% |
-| Social Security at 70 | 13.8% | $690k | 50% |
-| SS at 67 + $300k fixed SPIA | 13.6% | $555k | 52% |
-| SS at 67 + $300k inflation-adjusted SPIA | 11.8% | $554k | 62% |
-| SS at 67 + $100k DIA at 85 | 15.1% | $597k | 40% |
+| Social Security at 67 | 15.1% | $730k | 40% |
+| Social Security at 70 | 13.9% | $683k | 50% |
+| SS at 67 + $300k fixed SPIA | 13.7% | $551k | 52% |
+| SS at 67 + $300k inflation-adjusted SPIA | 11.9% | $551k | 62% |
+| SS at 67 + $100k DIA at 85 | 15.2% | $593k | 40% |
 
 "Spending floor if short" is the median lowest spending, as a share of the $80k goal, among the paths that ran short.
 
@@ -127,9 +127,33 @@ Annuity prices come from the same mortality model: a fixed immediate annuity (SP
 
 Guaranteed income lowers the chance of running short and, more importantly, raises the floor when things go wrong: from 40% of planned spending to 62% with an inflation-adjusted annuity. The cost is a smaller expected bequest. Three results are worth noticing:
 
-- **Delaying Social Security to 70** works like buying an inflation-protected annuity from the government. It lowers shortfall risk and raises the floor for $46k of median bequest, against about $180k for either commercial annuity.
+- **Delaying Social Security to 70** works like buying an inflation-protected annuity from the government. It lowers shortfall risk and raises the floor for $47k of median bequest, against about $180k for either commercial annuity.
 - **The fixed annuity barely beats delaying Social Security.** At 3% inflation, a fixed payment loses 45% of its purchasing power over 20 years, just as the retiree is most likely to need it.
-- **The deferred annuity doesn't move the shortfall odds** (15.1% vs 15.0%). After 85 it covers most of the gap, so late shortfalls become small cuts instead of collapses. But those still count as "running short", and the $100k premium makes earlier shortfalls slightly more likely. A yes/no success rate undervalues this kind of insurance.
+- **The deferred annuity doesn't move the shortfall odds** (15.2% vs 15.1%). After 85 it covers most of the gap, so late shortfalls become small cuts instead of collapses. But those still count as "running short", and the $100k premium makes earlier shortfalls slightly more likely. A yes/no success rate undervalues this kind of insurance.
+
+### 5. Essential vs discretionary spending
+
+Not all spending is equal. The same household splits its $80k into **$52k of essentials** (housing, healthcare, food) and **$28k of discretionary** spending (travel, hobbies, gifts), and compares four strategies on the same 50,000 market paths and lifespans (from `python research.py`):
+
+- **Fixed spending:** $80k every year, no matter what.
+- **Guardrails (cut everything):** the simplified Guyton–Klinger rule, cutting total spending 10% at a time.
+- **Essentials-first guardrails:** the same triggers and the same dollar size of cut, but cuts come out of discretionary spending only and stop once it's gone.
+- **Floor and upside:** essentials-first guardrails, plus a $348k inflation-adjusted annuity sized so that the annuity and Social Security together cover the $52k of essentials from 67.
+
+| Strategy | Essentials always covered | Never ran out | Years below the full plan | Discretionary spending enjoyed | Median left at death |
+|---|---|---|---|---|---|
+| Fixed spending | 85.8% | 84.9% | 4% | 100% | $748k |
+| Guardrails (cut everything) | 89.4% | 100.0% | 50% | 87% | $879k |
+| Essentials-first guardrails | **99.7%** | 99.7% | 50% | 87% | $878k |
+| Floor and upside | **100.0%** | 100.0% | 51% | 93% | $608k |
+
+"Essentials always covered" means actual spending never fell below $52k in any year lived. "Discretionary spending enjoyed" is the median share of the planned $28k a year actually spent over a lifetime.
+
+![Essential vs discretionary spending](figures/essentials.png)
+
+- **Where the cut falls matters more than its size.** Both guardrail rules cut the same dollars at the same times. But cutting everything proportionally dips into essentials in about 1 retirement in 10, while taking cuts from discretionary spending first protects essentials in 99.7%. The improvement is 10.3 points (95% CI 10.0 to 10.6), with essentially the same discretionary spending and bequest.
+- **Guardrails keep spending below the full plan about half the time**, usually after an early cut that never gets fully reversed. That's the price of rarely running out, and it's why the cut rule should spare essentials.
+- **Floor and upside** is a classic retirement-income framework: guaranteed income for needs, the portfolio for wants. It makes essentials certain and leaves *more* room for discretionary spending (93% vs 87%), because the portfolio no longer carries the essentials. The cost is the bequest, which falls from $878k to $608k.
 
 ---
 
@@ -143,13 +167,29 @@ Guaranteed income lowers the chance of running short and, more importantly, rais
 
 | Success of a 60/40, 30-year plan | 3.0% | 3.5% | 4.0% | 4.5% | 5.0% |
 |---|---|---|---|---|---|
-| Lognormal, calibrated to 1928–2025 | 98.2% | 94.9% | 89.3% | 81.2% | 70.6% |
-| Fat-tailed, calibrated to 1928–2025 | 98.3% | 95.2% | 89.8% | 81.8% | 71.0% |
-| Block bootstrap of 1928–2025 | 98.7% | 95.9% | 90.2% | 81.6% | 70.8% |
-| Lognormal, muted forward-looking | 93.7% | 85.3% | 73.0% | 58.3% | 43.3% |
+| Lognormal, calibrated to 1928–2025 | 98.2% | 94.9% | 89.3% | 81.0% | 70.4% |
+| Fat-tailed, calibrated to 1928–2025 | 98.3% | 95.2% | 89.8% | 81.7% | 70.9% |
+| Block bootstrap of 1928–2025 | 98.8% | 95.9% | 90.2% | 81.5% | 70.6% |
+| Lognormal, muted forward-looking | 93.7% | 85.3% | 72.9% | 58.1% | 43.0% |
 | Actual 30-year windows since 1928 (69) | 100% | 100% | 89.9% | 75.4% | 65.2% |
 
-The three models fitted to history agree within about one point at every withdrawal rate. The shape of the return distribution matters little once its mean and volatility are pinned down. The expected-return assumption is what moves the answer: the muted assumptions cut success at 4% by 16 points. Sampling error, at 0.1–0.3 points, is the smallest source of uncertainty by far. That's model risk, and it's the main reason a planner should present a range rather than one number.
+The three models fitted to history agree within about one point at every withdrawal rate: the shape of the return distribution matters little once its mean and volatility are pinned down. The muted scenario changes several assumptions at once, so the next table separates them.
+
+### Which assumption matters? One at a time
+
+Starting from the historical assumptions, change one input to its muted value and hold the rest fixed (4% rule, 60/40, 30 years, same random draws for every row):
+
+| Assumption changed | Success | Change |
+|---|---|---|
+| None (historical baseline) | 89.3% | |
+| Expected returns lowered only (stocks 5.5%, bonds 1.5%) | 67.9% | −21.4 pts |
+| Volatility lowered only (stocks 17%, bonds 6%) | 93.7% | +4.4 pts |
+| Correlation raised only (0.20) | 88.2% | −1.0 pts |
+| All muted assumptions together | 72.9% | −16.3 pts |
+
+Expected returns dominate. Lower volatility pulls the other way and offsets about a quarter of the damage, which is why the full muted scenario looks less severe than lower returns alone. Sampling error, at 0.1–0.3 points, is the smallest source of uncertainty by far. That's model risk, and it's the main reason a planner should present a range of scenarios rather than one number.
+
+### Real history
 
 The historical windows overlap heavily (the 1966 and 1967 retirements share 29 years), so they are a sanity check rather than 69 independent data points. Every 4% failure started between **1962 and 1969**: retirees who met the 1970s stagflation in their first decade.
 
@@ -158,7 +198,7 @@ The historical windows overlap heavily (the 1966 and 1967 retirements share 29 y
 | Paths | Success | Standard error |
 |---|---|---|
 | 1,000 | 90.4% | 0.93 pp |
-| 10,000 | 89.5% | 0.31 pp |
+| 10,000 | 89.4% | 0.31 pp |
 | 100,000 | 89.1% | 0.10 pp |
 
 The SE shrinks with $1/\sqrt{N}$: 100 times the paths gives one-tenth of the error, an 89% reduction here against 90% in theory.
@@ -168,11 +208,11 @@ The SE shrinks with $1/\sqrt{N}$: 100 times the paths gives one-tenth of the err
 | 4% start, 60/40, 30 years | Never ran out | Success (with 80% floor) | Any spending cut | Spending below 80% of plan | Median lowest spending |
 |---|---|---|---|---|---|
 | Fixed, 1928–2025 calibration | 89.3% | 89.3% | 0% | 10.5% | $40,000 |
-| Guardrails, 1928–2025 calibration | 99.7% | 75.4% | 54.5% | 24.6% | $36,000 |
-| Fixed, muted forward | 73.0% | 73.0% | 0% | 26.4% | $40,000 |
-| Guardrails, muted forward | 99.1% | 58.5% | 71.6% | 41.5% | $32,400 |
+| Guardrails, 1928–2025 calibration | 99.7% | 75.3% | 54.5% | 24.7% | $36,000 |
+| Fixed, muted forward | 72.9% | 72.9% | 0% | 26.5% | $40,000 |
+| Guardrails, muted forward | 99.1% | 58.4% | 71.7% | 41.6% | $32,400 |
 
-Guardrails almost never run out because they turn a portfolio failure into a series of spending cuts. Whether that's a better outcome depends on how far the retiree can cut. Counting a drop below 80% of the plan as a failure, guardrails succeed *less* often than fixed spending.
+Guardrails almost never run out because they turn a portfolio failure into a series of spending cuts. Whether that's a better outcome depends on how far the retiree can cut. Counting a drop below 80% of the plan as a failure, guardrails succeed *less* often than fixed spending. Section 5 shows how to keep most of the benefit: protect the essentials and cut only discretionary spending.
 
 ### Annuity trade-off, measured as a paired difference
 
@@ -180,10 +220,10 @@ Both plans run on the same 50,000 market paths and lifespans, so the improvement
 
 | | Success | Median left at death | Floor if short |
 |---|---|---|---|
-| No annuity | 85.0% | $753k | 40% |
-| $300k inflation-adjusted SPIA | 88.2% | $564k | 62% |
+| No annuity | 84.9% | $748k | 40% |
+| $300k inflation-adjusted SPIA | 88.2% | $560k | 62% |
 
-The annuity improves success by **3.26 points (95% CI 3.11 to 3.42)**. The standard error of that difference is 0.08 points, against 0.22 if the two plans had been simulated independently. Common random numbers bought the same precision with about one-seventh of the paths.
+The annuity improves success by **3.25 points (95% CI 3.09 to 3.40)**. The standard error of that difference is 0.08 points, against 0.22 if the two plans had been simulated independently. Common random numbers bought the same precision with about one-seventh of the paths.
 
 ---
 
@@ -207,7 +247,7 @@ to hit the target exactly.
 
 **Historical block bootstrap** (`model="bootstrap"`). Each path is stitched together from random 5-year runs of actual 1928–2025 real returns, wrapping around the end of the sample (a circular block bootstrap). Stocks and bonds always come from the same calendar year. No distribution is assumed, and multi-year patterns like the 1970s survive within blocks.
 
-**Portfolio.** Rebalanced to its target mix every year: $r_p = w\,r_s + (1-w)\,r_b - \text{fee}$.
+**Portfolio.** Rebalanced to its target mix every year, with the fee charged on assets: $r_p = (1 + w\,r_s + (1-w)\,r_b)(1 - \text{fee}) - 1$. Charging the fee as a share of the balance, rather than subtracting it from the return, means a fee can never push a portfolio below zero.
 
 ### Cash flows, one year at a time
 
@@ -215,11 +255,13 @@ For each path, at the start of year $t$:
 
 1. Portfolio withdrawal $W_t = \max(\text{spending}_t - \text{income}_t,\ 0)$
 2. If the balance $B_t < W_t$ while the retiree is alive, record a shortfall and withdraw what is left
-3. $B_{t+1} = (B_t - W_t)(1 + r_{p,t})$
+3. $B_{t+1} = (B_t - W_t + \text{surplus}_t)(1 + r_{p,t})$, where the surplus is guaranteed income beyond that year's spending. It is reinvested by default (`surplus_income="reinvest"`), or treated as spent with `"spend"`.
 
-A path **succeeds** if, in every year the retiree is alive, (a) that year's spending target is fully funded and (b) actual spending stays at or above a floor, 80% of the original goal by default (`spending_floor`). Under fixed spending, (b) adds nothing, because spending only drops when the money runs out. Under guardrails it matters: without it, a retiree whose spending was cut to 60% of the plan would still count as a success.
+A path **succeeds** if, in every year the retiree is alive, (a) that year's spending target is fully funded and (b) actual spending stays at or above a floor: 80% of the original goal by default (`spending_floor`), or the essential budget if the plan sets `essential_spending`. Under fixed spending, (b) adds nothing, because spending only drops when the money runs out. Under guardrails it matters: without it, a retiree whose spending was cut to 60% of the plan would still count as a success.
 
 **Guardrails** (simplified Guyton–Klinger). If the current withdrawal rate drifts 20% above its reference rate, spending is cut 10% (skipped in the final 15 years); if it drifts 20% below, spending rises 10%. The reference is the rate the original plan implies *for that year's income mix*, so the year Social Security starts doesn't look like a windfall.
+
+**Essentials-first guardrails** (`rule="essentials_first"`) use the same triggers and the same dollar size of cut, but take cuts out of discretionary spending only and stop once it's gone. Essentials are never cut by the rule, only by running out of money.
 
 ### Guaranteed income
 
@@ -245,11 +287,17 @@ with modal age $m = 88$ and dispersion $b = 10$. Remaining lifetimes are sampled
 
 Each path is a Bernoulli trial, so
 
-$$\hat p = \frac{\#\text{successes}}{N}, \qquad \text{SE} = \sqrt{\frac{\hat p(1-\hat p)}{N}}, \qquad \text{95\% CI} = \hat p \pm 1.96\,\text{SE}.$$
+$$\hat p = \frac{\#\text{successes}}{N}, \qquad \text{SE} = \sqrt{\frac{\hat p(1-\hat p)}{N}}.$$
 
-With 10,000 paths the SE is about 0.3 percentage points, so reporting "89.5%" to one decimal is honest and "89.53%" would not be.
+With 10,000 paths the SE is about 0.3 percentage points, so reporting "89.4%" to one decimal is honest and "89.43%" would not be.
 
-**Antithetic variates.** Paths come in pairs driven by $z$ and $-z$. Because the two paths in a pair are dependent, the SE is computed from the $N/2$ pair averages. Here it only cuts the SE from 0.31% to 0.29%. That's expected: antithetics work best when the output is a monotone function of the inputs, and a yes/no success indicator is a coarse, threshold-shaped function of 30 years of returns.
+**Confidence intervals** use the Wilson score interval. The textbook $\hat p \pm 1.96\,\text{SE}$ collapses to a single point when every path succeeds, claiming zero uncertainty, and can spill outside $[0, 1]$. Wilson inverts the score test instead:
+
+$$\frac{\hat p + \frac{z^2}{2N}}{1 + \frac{z^2}{N}} \;\pm\; \frac{z}{1 + \frac{z^2}{N}}\sqrt{\frac{\hat p(1-\hat p)}{N} + \frac{z^2}{4N^2}}, \qquad z = 1.96.$$
+
+For the central probabilities in this README it matches the textbook interval to within a few hundredths of a point; at 10,000 successes out of 10,000 it gives 99.96% to 100% instead of 100% to 100%. Every interval covers sampling error only, not uncertainty about the assumptions.
+
+**Antithetic variates.** Paths come in pairs driven by $z$ and $-z$. Because the two paths in a pair are dependent, the SE and interval are computed from the $N/2$ pair averages. Here it only cuts the SE from 0.31% to 0.29%. That's expected: antithetics work best when the output is a monotone function of the inputs, and a yes/no success indicator is a coarse, threshold-shaped function of 30 years of returns.
 
 **Common random numbers.** When comparing plans (the grid, the income scenarios, the annuity test), every plan runs on the same market paths and the same longevity draws. Longevity is shared as the underlying *uniform* draws, so plans with different mortality assumptions or retirement ages still face matched luck: each converts the same $U$ into a lifespan through its own survival curve. The difference between two plans is then estimated path by path, with variance $\text{Var}(A) + \text{Var}(B) - 2\,\text{Cov}(A,B)$, and CRN makes the covariance large.
 
@@ -263,13 +311,14 @@ retirement_mc/
   returns.py      calibration, lognormal / fat-tailed / bootstrap returns, Cholesky, antithetics
   mortality.py    Gompertz survival curve, inverse-transform lifetime sampling
   income.py       income streams, Social Security claiming factors, annuity pricing
-  simulation.py   RetirementPlan, SimulationConfig, the year-by-year engine, success, SEs
+  simulation.py   RetirementPlan, SimulationConfig, the year-by-year engine, spending rules,
+                  success, SEs and Wilson intervals
   analysis.py     success grid and scenario comparisons (CRN), paired differences,
                   sequence-risk quintiles, reorder demo, historical backtest
   plots.py        matplotlib charts
 run_example.py    reproduces the Results section
 research.py       reproduces the Robustness section
-tests/            33 pytest checks
+tests/            43 pytest checks
 docs/index.html   the browser version (served by GitHub Pages)
 ```
 
@@ -282,7 +331,10 @@ docs/index.html   the browser version (served by GitHub Pages)
 - Bootstrap paths consist of genuine consecutive historical years.
 - Antithetic pairs are exact mirror images, and Gompertz samples match the analytic survival curve.
 - Social Security factors match SSA's table.
-- Guardrail cuts below the floor count as failures.
+- Guardrail cuts below the floor count as failures, and the essentials-first rule never cuts below the essentials.
+- A 99% crash plus a 2% fee can't push a balance below zero.
+- Surplus income is reinvested or spent as configured.
+- The Wilson interval stays honest at 0% and 100% and matches the textbook interval near the middle.
 - Comparisons respect each plan's own mortality, and the CRN grid is monotone.
 
 ---
@@ -319,7 +371,7 @@ I built this project to work at the intersection of finance and simulation. It t
 
 Design priorities:
 
-- **Every probability comes with a confidence interval.** A simulated success rate is an estimate, not a fact, and the interval shows how much to trust it.
+- **Headline probabilities come with a confidence interval.** A simulated success rate is an estimate, not a fact, and the interval shows how much to trust it.
 - **Success rate isn't the only measure.** A yes/no success rate undervalues guarantees like annuities, which make bad outcomes less severe. So the results also report the spending floor when money runs short and the amount left at death.
 - **Anyone can try it.** A browser version of the core model is hosted on GitHub Pages, so it runs without installing Python.
 

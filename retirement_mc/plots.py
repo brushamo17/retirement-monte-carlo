@@ -112,6 +112,36 @@ def model_risk_chart(rates, curves: dict[str, list[float]], ax=None):
     return ax
 
 
+def essentials_chart(summaries: dict[str, dict], axes=None):
+    """Three panels: essentials always covered, discretionary enjoyed, median bequest."""
+    if axes is None:
+        _, axes = plt.subplots(1, 3, figsize=(13, 3.8))
+    names = list(summaries)
+    y = np.arange(len(names))[::-1]
+    panels = [
+        ("Essentials always covered", [summaries[n]["floor_met"] for n in names], SERIES[2], lambda v: f"{v:.1%}"),
+        ("Discretionary spending enjoyed", [summaries[n]["median_discretionary_share"] for n in names], SERIES[1],
+         lambda v: f"{v:.0%}"),
+        ("Median amount left at death", [summaries[n]["median_terminal"] for n in names], SERIES[0], _money),
+    ]
+    for i, (ax, (title, vals, color, fmt)) in enumerate(zip(axes, panels)):
+        ax.barh(y, vals, color=color, height=0.55)
+        ax.set_title(title, loc="left", color=INK, fontsize=11)
+        ax.set_yticks(y, names if i == 0 else [""] * len(names))
+        for yi, v in zip(y, vals):
+            ax.text(v, yi, "  " + fmt(v), va="center", fontsize=9, color=INK)
+        ax.xaxis.set_major_formatter(FuncFormatter(_money) if i == 2 else PercentFormatter(1.0))
+        if i < 2:
+            ax.set_xlim(0, 1.0)
+        ax.grid(axis="x", color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(colors=MUTED, length=0)
+        ax.margins(x=0.28)
+    return axes
+
+
 def scenario_chart(summaries: dict[str, dict], axes=None):
     """Side-by-side bars: probability of a shortfall while alive, and median bequest."""
     if axes is None:
