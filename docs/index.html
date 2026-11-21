@@ -4,11 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Retirement Monte Carlo Simulator</title>
+<meta name="description" content="Interactive retirement Monte Carlo simulator with Social Security, pensions, annuities and longevity risk, running the project's Python code in the browser.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-/* Layout idea: a planner's workbench. Inputs stay pinned on the left, results read top-down: verdict, path of wealth, policy map, sequence risk, method. */
+/* Layout: a planner's workbench. Inputs stay pinned on the left; results read top-down:
+   verdict, where the money comes from, path of wealth, when it could run out, comparison,
+   sensitivity, policy map, sequence risk, method. */
 :root {
   color-scheme: light;
   --plane: #eef1f5;
@@ -24,6 +28,8 @@
   --s1: #2a78d6;
   --s2: #eb6834;
   --s3: #1baf7a;
+  --s4: #8b5cd6;
+  --gap-fill: #dfe3ea;
   --band-outer: #cde2fb;
   --band-inner: #86b6ef;
   --band-line: #104281;
@@ -40,43 +46,30 @@
     --plane: #0c0f14; --surface: #151a21; --ink: #eef1f6; --ink-2: #b7bfcc; --muted: #8a91a0;
     --grid: #252b34; --axis: #3a414c; --border: rgba(255,255,255,0.10);
     --accent: #3987e5; --accent-ink: #86b6ef;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #9a72e0; --gap-fill: #2a313b;
     --band-outer: #1b3557; --band-inner: #2b5c98; --band-line: #9ec5f4;
     --heat: #3987e5;
     --good-ink: #2fc22f; --warn-ink: #fab219; --crit-ink: #ef7373;
   }
 }
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --plane: #0c0f14; --surface: #151a21; --ink: #eef1f6; --ink-2: #b7bfcc; --muted: #8a91a0;
-  --grid: #252b34; --axis: #3a414c; --border: rgba(255,255,255,0.10);
-  --accent: #3987e5; --accent-ink: #86b6ef;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
-  --band-outer: #1b3557; --band-inner: #2b5c98; --band-line: #9ec5f4;
-  --heat: #3987e5;
-  --good-ink: #2fc22f; --warn-ink: #fab219; --crit-ink: #ef7373;
-}
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-body {
-  background: var(--plane); color: var(--ink);
-  font: 15px/1.5 var(--font-body);
-  font-variant-numeric: tabular-nums;
-}
+body { background: var(--plane); color: var(--ink); font: 15px/1.5 var(--font-body); font-variant-numeric: tabular-nums; }
 h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: 0.005em; }
 h1 { font-size: 26px; line-height: 1.15; }
 h2 { font-size: 19px; }
 h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
 p { margin: 0; }
 a { color: var(--accent-ink); }
+[hidden] { display: none !important; }
 
-.app { display: grid; grid-template-columns: 312px minmax(0, 1fr); gap: 20px; max-width: 1320px; margin: 0 auto; padding: 20px 20px 48px; align-items: start; }
+.app { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; max-width: 1320px; margin: 0 auto; padding: 20px 20px 48px; align-items: start; }
 @media (max-width: 920px) { .app { grid-template-columns: 1fr; padding: 16px 16px 40px; } }
 
 /* Controls */
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
-.controls { position: sticky; top: 16px; padding: 18px 18px 14px; display: flex; flex-direction: column; gap: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.controls { position: sticky; top: 16px; padding: 18px 18px 14px; display: flex; flex-direction: column; gap: 18px; max-height: calc(100vh - 32px); overflow-y: auto; }
 @media (max-width: 920px) { .controls { position: static; max-height: none; } }
 .brand { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--grid); }
 .brand p { color: var(--ink-2); font-size: 13.5px; }
@@ -87,34 +80,45 @@ label, .label { font-size: 13px; font-weight: 500; color: var(--ink); }
 .val { font-weight: 600; font-size: 14px; }
 .hint { font-size: 12px; color: var(--muted); }
 input[type=range] { width: 100%; accent-color: var(--accent); margin: 2px 0 0; }
-input[type=number], select {
-  font: inherit; font-size: 14px; color: var(--ink); background: var(--plane);
-  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%;
-}
-input[type=number] { font-variant-numeric: tabular-nums; }
+input[type=number], select { font: inherit; font-size: 14px; color: var(--ink); background: var(--plane); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%; }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--plane); border: 1px solid var(--border); border-radius: 7px; padding: 2px; gap: 2px; }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
-.seg label { text-align: center; font-size: 13px; padding: 6px 4px; border-radius: 5px; cursor: pointer; color: var(--ink-2); font-weight: 500; }
+.seg label { text-align: center; font-size: 12.5px; padding: 6px 3px; border-radius: 5px; cursor: pointer; color: var(--ink-2); font-weight: 500; line-height: 1.25; }
 .seg input:checked + label { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
 .seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 1px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .grid2 .field label { font-size: 12px; color: var(--ink-2); font-weight: 500; }
 .check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
 .check input { accent-color: var(--accent); margin-top: 3px; }
+.check.toggle { font-weight: 600; font-size: 13.5px; }
+.income-block { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border: 1px solid var(--grid); border-radius: 8px; }
+.income-block .sub-fields { display: flex; flex-direction: column; gap: 10px; }
 details.adv summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink-2); list-style: none; display: flex; justify-content: space-between; }
 details.adv summary::after { content: "+"; color: var(--muted); }
 details.adv[open] summary::after { content: "–"; }
 details.adv[open] summary { margin-bottom: 12px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.btn { font: inherit; font-size: 13px; font-weight: 600; color: var(--surface); background: var(--accent); border: 0; border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+button.btn.secondary { color: var(--ink); background: var(--plane); border: 1px solid var(--border); }
+button.btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Results */
 .results { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.card { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; transition: opacity .15s; }
+.card.stale, .verdict.stale { opacity: 0.55; }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.card-head p { color: var(--ink-2); font-size: 13.5px; max-width: 70ch; }
-.insight { font-size: 14px; color: var(--ink); max-width: 75ch; border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; }
+.card-head p { color: var(--ink-2); font-size: 13.5px; max-width: 72ch; }
+.insight { font-size: 14px; color: var(--ink); max-width: 78ch; border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; }
+.note { font-size: 12.5px; color: var(--muted); max-width: 80ch; }
 
-.verdict { display: grid; grid-template-columns: minmax(240px, 1.3fr) repeat(3, minmax(150px, 1fr)); gap: 0; }
+.loading { padding: 18px 20px; display: flex; gap: 14px; align-items: flex-start; }
+.loading b { font-family: var(--font-display); font-size: 17px; }
+.loading p { font-size: 13.5px; color: var(--ink-2); }
+.spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--grid); border-top-color: var(--accent); animation: spin 0.9s linear infinite; flex: none; margin-top: 3px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.error { padding: 16px 20px; border-color: var(--crit); color: var(--ink); font-size: 14px; }
+
+.verdict { display: grid; grid-template-columns: minmax(240px, 1.3fr) repeat(3, minmax(150px, 1fr)); gap: 0; transition: opacity .15s; }
 @media (max-width: 1100px) { .verdict { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 520px) { .verdict { grid-template-columns: 1fr; } }
 .tile { padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--grid); }
@@ -131,11 +135,7 @@ details.adv[open] summary { margin-bottom: 12px; }
 .chart { position: relative; width: 100%; }
 .chart svg { display: block; width: 100%; overflow: visible; }
 .axis-label { fill: var(--muted); font-size: 11.5px; font-family: var(--font-body); }
-.tip {
-  position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
-  border: 1px solid var(--border); box-shadow: 0 4px 14px rgba(0,0,0,0.14); border-radius: 7px;
-  padding: 8px 10px; font-size: 12.5px; line-height: 1.45; min-width: 150px; opacity: 0; transition: opacity .08s; z-index: 5;
-}
+.tip { position: absolute; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); box-shadow: 0 4px 14px rgba(0,0,0,0.14); border-radius: 7px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45; min-width: 160px; opacity: 0; transition: opacity .08s; z-index: 5; }
 .tip b { font-weight: 600; }
 .tip .row { display: flex; justify-content: space-between; gap: 14px; }
 .tip .row span:first-child { color: var(--ink-2); }
@@ -144,20 +144,27 @@ details.adv[open] summary { margin-bottom: 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .legend i.line { height: 3px; border-radius: 2px; width: 16px; }
+.legend i.dash { height: 0; width: 16px; border-top: 2px dashed currentColor; border-radius: 0; }
 
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 @media (max-width: 1100px) { .two { grid-template-columns: 1fr; } }
 .sub { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* Comparison */
+.cmp-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+table.cmp { border-collapse: collapse; font-size: 13.5px; width: 100%; }
+table.cmp th, table.cmp td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--grid); }
+table.cmp th:first-child, table.cmp td:first-child { text-align: left; color: var(--ink-2); }
+table.cmp thead th { font-weight: 600; color: var(--ink); }
+table.cmp .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+.cmp-scroll { overflow-x: auto; }
 
 /* Heatmap */
 .heat-wrap { overflow-x: auto; }
 .heat { display: grid; grid-template-columns: 54px repeat(9, minmax(46px, 1fr)); gap: 2px; min-width: 500px; }
 .heat .hd { font-size: 12px; color: var(--muted); text-align: center; padding: 4px 0; }
 .heat .rl { font-size: 12px; color: var(--muted); text-align: right; padding-right: 8px; display: flex; align-items: center; justify-content: flex-end; }
-.heat button {
-  font: inherit; font-size: 12.5px; font-weight: 500; border: 0; border-radius: 3px; height: 32px; cursor: pointer;
-  color: var(--ink); font-variant-numeric: tabular-nums; position: relative;
-}
+.heat button { font: inherit; font-size: 12.5px; font-weight: 500; border: 0; border-radius: 3px; height: 32px; cursor: pointer; color: var(--ink); font-variant-numeric: tabular-nums; position: relative; }
 .heat button.hi { color: #fff; }
 .heat button:hover { outline: 2px solid var(--ink-2); outline-offset: -2px; }
 .heat button.cur { outline: 2.5px solid var(--ink); outline-offset: -1px; z-index: 1; }
@@ -178,87 +185,170 @@ table.data th:first-child, table.data td:first-child { text-align: left; }
 table.data th { color: var(--ink-2); font-weight: 500; }
 details.tbl summary { cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
 details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
-@media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .tip, .card, .verdict { transition: none; } .spinner { animation-duration: 3s; } }
 </style>
 </head>
 <body>
 <div class="app">
+  <!-- ============================== INPUTS ============================== -->
+  <!-- Every input that Python needs has data-key="<name>", matching the names in
+       retirement_mc/web.py (DEFAULTS). data-pct means the box shows a percentage
+       but Python gets a fraction (60 -> 0.6). -->
   <aside class="panel controls" aria-label="Simulation inputs">
     <div class="brand">
       <h1>Retirement Monte Carlo</h1>
-      <p>How likely is a portfolio to fund every year of retirement? Change any input and thousands of retirements re-run instantly.</p>
+      <p>How likely is a retirement plan to last? This page runs the project's Python simulator in your browser, re-running thousands of retirements whenever you change an input. <a href="https://github.com/brushamo17/retirement-monte-carlo">Code and full results on GitHub</a>.</p>
+    </div>
+
+    <div class="field">
+      <label for="scenario">Start from a scenario</label>
+      <select id="scenario"><option value="classic">Classic 4% rule</option></select>
+      <span class="hint" id="scenarioHint">$1M, $40k a year adjusted for inflation, 60/40, 30 years. The textbook case.</span>
     </div>
 
     <div class="group">
       <h3>Plan</h3>
       <div class="field">
-        <label for="start">Starting portfolio ($)</label>
-        <input type="number" id="start" value="1000000" min="10000" step="10000">
+        <label for="portfolio">Starting portfolio ($)</label>
+        <input type="number" id="portfolio" data-key="portfolio" value="1000000" min="0" step="10000">
       </div>
       <div class="field">
-        <div class="field-row"><label for="rate">Initial withdrawal rate</label><span class="val" id="rateOut"></span></div>
-        <input type="range" id="rate" min="2" max="8" step="0.1" value="4">
-        <span class="hint" id="rateHint"></span>
+        <label for="spending">Yearly spending goal ($, today's dollars)</label>
+        <input type="number" id="spending" data-key="spending" value="40000" min="0" step="1000">
+        <span class="hint" id="spendHint">4.0% of the starting portfolio</span>
       </div>
       <div class="field">
-        <div class="field-row"><label for="years">Retirement length</label><span class="val" id="yearsOut"></span></div>
-        <input type="range" id="years" min="15" max="45" step="1" value="30">
-      </div>
-      <div class="field">
-        <div class="field-row"><label for="stock">Stocks / bonds</label><span class="val" id="stockOut"></span></div>
-        <input type="range" id="stock" min="0" max="100" step="5" value="60">
+        <div class="field-row"><label for="stock">Stocks / bonds</label><span class="val" id="stockOut">60% / 40%</span></div>
+        <input type="range" id="stock" data-key="stock_share" data-pct min="0" max="100" step="5" value="60">
         <span class="hint">Rebalanced back to target every year.</span>
       </div>
       <div class="field">
-        <span class="label" id="ruleLbl">Withdrawal rule</span>
+        <span class="label" id="ruleLbl">Spending rule</span>
         <div class="seg" role="radiogroup" aria-labelledby="ruleLbl">
-          <input type="radio" name="rule" id="ruleFixed" value="fixed" checked><label for="ruleFixed">Fixed real</label>
-          <input type="radio" name="rule" id="ruleGuard" value="guard"><label for="ruleGuard">Guardrails</label>
+          <input type="radio" name="rule" id="ruleFixed" data-key="rule" value="fixed" checked><label for="ruleFixed">Fixed</label>
+          <input type="radio" name="rule" id="ruleGuard" data-key="rule" value="guardrails"><label for="ruleGuard">Guardrails</label>
+          <input type="radio" name="rule" id="ruleEss" data-key="rule" value="essentials_first"><label for="ruleEss">Essentials first</label>
         </div>
-        <span class="hint" id="ruleHint"></span>
+        <span class="hint" id="ruleHint">Same inflation-adjusted amount every year, whatever markets do.</span>
+      </div>
+      <div class="field" data-show="rule=essentials_first" hidden>
+        <label for="essential">Essential part of spending ($)</label>
+        <input type="number" id="essential" data-key="essential" value="26000" min="0" step="1000">
+        <span class="hint">Housing, food, healthcare. Cuts come out of the rest, and success means the essentials were always covered.</span>
       </div>
       <div class="field">
-        <div class="field-row"><label for="fee">Annual fees</label><span class="val" id="feeOut"></span></div>
-        <input type="range" id="fee" min="0" max="2" step="0.05" value="0.5">
+        <div class="field-row"><label for="fee">Annual fees</label><span class="val" id="feeOut">0.50%</span></div>
+        <input type="range" id="fee" data-key="fee" data-pct min="0" max="2" step="0.05" value="0.5">
       </div>
       <div class="field">
         <label for="target">Your target success rate</label>
-        <select id="target">
-          <option value="0.75">75%</option>
-          <option value="0.8">80%</option>
-          <option value="0.85">85%</option>
-          <option value="0.9" selected>90%</option>
-          <option value="0.95">95%</option>
+        <select id="target" data-key="target" data-num>
+          <option value="0.75">75%</option><option value="0.8">80%</option><option value="0.85">85%</option>
+          <option value="0.9" selected>90%</option><option value="0.95">95%</option>
         </select>
-        <span class="hint">There is no universally right number; planners commonly aim for somewhere between 75% and 95%.</span>
+        <span class="hint">There is no universally right number; planners commonly aim for 75% to 95%.</span>
       </div>
     </div>
 
     <div class="group">
-      <h3>Return model</h3>
+      <h3>Timeline</h3>
       <div class="field">
-        <span class="label" id="modelLbl">Distribution</span>
-        <div class="seg" role="radiogroup" aria-labelledby="modelLbl">
-          <input type="radio" name="model" id="modelN" value="normal" checked><label for="modelN">Lognormal</label>
-          <input type="radio" name="model" id="modelT" value="fat"><label for="modelT">Fat tails</label>
-        </div>
+        <label for="retAge">Retirement age</label>
+        <input type="number" id="retAge" data-key="retirement_age" value="65" min="40" max="80" step="1">
       </div>
       <div class="field">
-        <label for="preset">Capital market assumptions</label>
-        <select id="preset">
-          <option value="hist">US history 1928–2025</option>
-          <option value="low">Muted forward-looking</option>
+        <span class="label" id="lifeLbl">How long retirement lasts</span>
+        <div class="seg" role="radiogroup" aria-labelledby="lifeLbl">
+          <input type="radio" name="lifespan" id="lifeFixed" data-key="lifespan" value="fixed" checked><label for="lifeFixed">Fixed length</label>
+          <input type="radio" name="lifespan" id="lifeRandom" data-key="lifespan" value="random"><label for="lifeRandom">Random lifespan</label>
+        </div>
+      </div>
+      <div class="field" data-show="lifespan=fixed">
+        <div class="field-row"><label for="horizon">Retirement length</label><span class="val" id="horizonOut">30 years</span></div>
+        <input type="range" id="horizon" data-key="horizon_years" min="10" max="50" step="1" value="30">
+      </div>
+      <div class="field" data-show="lifespan=random" hidden>
+        <div class="field-row"><label for="modal">Longevity (most common age at death)</label><span class="val" id="modalOut">88</span></div>
+        <input type="range" id="modal" data-key="modal_age" min="80" max="96" step="1" value="88">
+        <span class="hint" id="lifeHint">Each simulated retiree gets a random lifespan (Gompertz law). Success means the money lasted as long as they did.</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Guaranteed income</h3>
+      <div class="income-block">
+        <label class="check toggle"><input type="checkbox" id="ssOn" data-key="ss_on"> <span>Social Security</span></label>
+        <div class="sub-fields" data-show="ss_on" hidden>
+          <div class="field">
+            <label for="ssBen">Yearly benefit at full retirement age, 67 ($)</label>
+            <input type="number" id="ssBen" data-key="ss_benefit" value="32000" min="0" step="1000">
+          </div>
+          <div class="field">
+            <div class="field-row"><label for="ssAge">Claiming age</label><span class="val" id="ssAgeOut">67</span></div>
+            <input type="range" id="ssAge" data-key="ss_claim_age" min="62" max="70" step="1" value="67">
+            <span class="hint" id="ssHint">Claiming early cuts the benefit (70% at 62); waiting raises it 8% a year (124% at 70). Rises with inflation.</span>
+          </div>
+        </div>
+      </div>
+      <div class="income-block">
+        <label class="check toggle"><input type="checkbox" id="penOn" data-key="pension_on"> <span>Pension</span></label>
+        <div class="sub-fields" data-show="pension_on" hidden>
+          <div class="grid2">
+            <div class="field"><label for="penAmt">Yearly amount ($)</label><input type="number" id="penAmt" data-key="pension_amount" value="20000" min="0" step="1000"></div>
+            <div class="field"><label for="penAge">Starts at age</label><input type="number" id="penAge" data-key="pension_start_age" value="65" min="40" max="90" step="1"></div>
+          </div>
+          <label class="check"><input type="checkbox" id="penCola" data-key="pension_cola" checked> <span>Rises with inflation (cost-of-living raises). Without them, a fixed pension loses buying power every year.</span></label>
+        </div>
+      </div>
+      <div class="income-block">
+        <label class="check toggle"><input type="checkbox" id="annOn" data-key="annuity_on"> <span>Lifetime annuity</span></label>
+        <div class="sub-fields" data-show="annuity_on" hidden>
+          <div class="field">
+            <label for="annPrem">Premium paid from the portfolio ($)</label>
+            <input type="number" id="annPrem" data-key="annuity_premium" value="300000" min="0" step="10000">
+          </div>
+          <div class="field">
+            <label for="annKind">Type</label>
+            <select id="annKind" data-key="annuity_kind">
+              <option value="spia_real">Immediate, rises with inflation</option>
+              <option value="spia_fixed">Immediate, fixed dollars</option>
+              <option value="dia85">Deferred, starts at 85 (longevity insurance)</option>
+            </select>
+            <span class="hint" id="annHint">Priced from the same mortality model as the lifespans, with a 5% insurer load.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Markets</h3>
+      <div class="field">
+        <span class="label" id="modelLbl">Return model</span>
+        <div class="seg" role="radiogroup" aria-labelledby="modelLbl">
+          <input type="radio" name="model" id="modelN" data-key="model" value="lognormal" checked><label for="modelN">Lognormal</label>
+          <input type="radio" name="model" id="modelT" data-key="model" value="fat_tailed"><label for="modelT">Fat tails</label>
+          <input type="radio" name="model" id="modelB" data-key="model" value="bootstrap"><label for="modelB">History</label>
+        </div>
+        <span class="hint" id="modelHint">Log-returns are bivariate normal, matched to the means, volatilities and correlation below.</span>
+      </div>
+      <div class="field">
+        <label for="market">Capital market assumptions</label>
+        <select id="market" data-key="market">
+          <option value="historical">US history 1928–2025</option>
+          <option value="muted">Muted forward-looking</option>
           <option value="custom">Custom</option>
         </select>
         <span class="hint">Annual real (after-inflation) returns. Default: S&amp;P 500 and 10-year Treasuries, 1928–2025 (Damodaran, NYU), deflated by CPI.</span>
       </div>
-      <div class="grid2">
-        <div class="field"><label for="ms">Stock mean %</label><input type="number" id="ms" step="0.1"></div>
-        <div class="field"><label for="ss">Stock st. dev. %</label><input type="number" id="ss" step="0.5" min="0"></div>
-        <div class="field"><label for="mb">Bond mean %</label><input type="number" id="mb" step="0.1"></div>
-        <div class="field"><label for="sb">Bond st. dev. %</label><input type="number" id="sb" step="0.5" min="0"></div>
-        <div class="field"><label for="rho">Correlation ρ</label><input type="number" id="rho" step="0.05" min="-0.95" max="0.95"></div>
+      <div class="grid2" id="marketFields">
+        <div class="field"><label for="ms">Stock mean %</label><input type="number" id="ms" data-key="stock_mean" data-pct step="0.1" value="8.62"></div>
+        <div class="field"><label for="ss">Stock st. dev. %</label><input type="number" id="ss" data-key="stock_sd" data-pct step="0.5" min="0" value="19.33"></div>
+        <div class="field"><label for="mb">Bond mean %</label><input type="number" id="mb" data-key="bond_mean" data-pct step="0.1" value="1.84"></div>
+        <div class="field"><label for="sb">Bond st. dev. %</label><input type="number" id="sb" data-key="bond_sd" data-pct step="0.5" min="0" value="8.86"></div>
+        <div class="field"><label for="rho">Correlation ρ</label><input type="number" id="rho" data-key="correlation" step="0.05" min="-0.95" max="0.95" value="0.09"></div>
+        <div class="field"><label for="infl">Inflation %</label><input type="number" id="infl" data-key="inflation" data-pct step="0.1" value="3.02"></div>
       </div>
+      <span class="hint">Everything is in today's dollars, so inflation only matters for fixed-dollar income: a pension without raises or a fixed annuity.</span>
     </div>
 
     <details class="adv">
@@ -266,52 +356,58 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       <div class="group">
         <div class="field">
           <label for="nsim">Number of simulated retirements</label>
-          <select id="nsim">
-            <option value="1000">1,000</option>
-            <option value="5000">5,000</option>
-            <option value="10000" selected>10,000</option>
-            <option value="25000">25,000</option>
+          <select id="nsim" data-key="n_paths" data-num>
+            <option value="1000">1,000</option><option value="5000">5,000</option>
+            <option value="10000" selected>10,000</option><option value="25000">25,000</option>
           </select>
         </div>
         <div class="field">
           <label for="seed">Random seed</label>
-          <input type="number" id="seed" value="3044" step="1">
-          <span class="hint">Same seed, same paths. Change it to see sampling noise.</span>
+          <input type="number" id="seed" data-key="seed" value="3044" step="1">
+          <span class="hint">Same seed, same paths, same numbers as the Python package. Change it to see sampling noise.</span>
         </div>
-        <label class="check"><input type="checkbox" id="anti"> <span>Antithetic variates: pair each path with its mirror image (−z) to reduce variance.</span></label>
+        <label class="check"><input type="checkbox" id="anti" data-key="antithetic"> <span>Antithetic variates: pair each path with its mirror image (−z) to reduce variance.</span></label>
       </div>
     </details>
   </aside>
 
+  <!-- ============================== RESULTS ============================== -->
   <main class="results">
-    <section class="panel verdict" aria-label="Summary">
+    <div class="panel loading" id="loading" role="status">
+      <div class="spinner" aria-hidden="true"></div>
+      <div>
+        <b>Starting Python in your browser</b>
+        <p id="loadStatus">Downloading Python…</p>
+        <p class="hint">The simulator is the same Python code as the GitHub repository, running on your device through Pyodide (Python compiled to WebAssembly). Nothing is sent to a server.</p>
+      </div>
+    </div>
+    <div class="panel error" id="error" role="alert" hidden></div>
+
+    <section class="panel verdict stale" id="verdict" aria-label="Summary">
       <div class="tile hero">
-        <span class="k">Estimated success under these assumptions</span>
+        <span class="k" id="tSuccK">Estimated success under these assumptions</span>
         <span class="v" id="tSucc">–</span>
         <span class="pill" id="tPill">–</span>
         <span class="s" id="tSuccSub"></span>
         <span class="s" id="tAlt"></span>
       </div>
-      <div class="tile">
-        <span class="k">Median ending balance</span>
-        <span class="v" id="tMed">–</span>
-        <span class="s" id="tMedSub">in today’s dollars</span>
-      </div>
-      <div class="tile">
-        <span class="k">Bad-case ending balance</span>
-        <span class="v" id="tP10">–</span>
-        <span class="s">10th percentile, today’s dollars</span>
-      </div>
-      <div class="tile">
-        <span class="k" id="t4k">When it fails</span>
-        <span class="v" id="t4v">–</span>
-        <span class="s" id="t4s"></span>
-      </div>
+      <div class="tile"><span class="k" id="tMedK">Median ending balance</span><span class="v" id="tMed">–</span><span class="s">in today’s dollars</span></div>
+      <div class="tile"><span class="k" id="tP10K">Bad-case ending balance</span><span class="v" id="tP10">–</span><span class="s">10th percentile, today’s dollars</span></div>
+      <div class="tile"><span class="k" id="t4k">When it runs short</span><span class="v" id="t4v">–</span><span class="s" id="t4s"></span></div>
     </section>
 
-    <section class="panel card">
+    <section class="panel card stale" id="incomeCard">
       <div class="card-head">
-        <h2>Range of portfolio paths</h2>
+        <h2>Where the money comes from</h2>
+        <div class="legend" id="incomeLegend"></div>
+      </div>
+      <div class="chart" id="income"></div>
+      <p class="insight" id="incomeInsight"></p>
+    </section>
+
+    <section class="panel card stale" id="fanCard">
+      <div class="card-head">
+        <h2 id="fanTitle">Range of portfolio paths</h2>
         <div class="legend">
           <span><i style="background:var(--band-outer)"></i>10th–90th percentile</span>
           <span><i style="background:var(--band-inner)"></i>25th–75th</span>
@@ -323,28 +419,70 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       <details class="tbl"><summary>Show as table</summary><div class="scroll" id="fanTable"></div></details>
     </section>
 
-    <section class="panel card">
+    <section class="panel card stale" id="runoutCard">
       <div class="card-head">
-        <h2>Success by withdrawal rate and stock allocation</h2>
-        <p>Every cell runs the same set of return paths (common random numbers), so differences between cells come from the policy, not from sampling noise. Click a cell to load it.</p>
+        <h2>When could the money run out?</h2>
+        <div class="legend" id="runoutLegend"></div>
+      </div>
+      <div class="chart" id="runout"></div>
+      <p class="insight" id="runoutInsight"></p>
+    </section>
+
+    <section class="panel card" id="compareCard">
+      <div class="card-head">
+        <h2>Compare two plans</h2>
+        <p>Pin the current plan as Plan A, then change anything on the left or pick another scenario. Both plans run on the same market paths and lifespans (common random numbers), so the difference you see comes from the plan, not from luck.</p>
+      </div>
+      <div class="cmp-actions">
+        <button type="button" class="btn" id="pinBtn" disabled>Pin current plan as A</button>
+        <button type="button" class="btn secondary" id="clearBtn" hidden>Clear comparison</button>
+        <span class="hint" id="pinHint"></span>
+      </div>
+      <div id="cmpBody" hidden>
+        <div class="cmp-scroll" id="cmpTable"></div>
+        <p class="insight" id="cmpInsight"></p>
+        <div class="legend" id="cmpLegend"></div>
+        <div class="chart" id="cmpChart"></div>
+        <p class="note" id="cmpNote"></p>
+      </div>
+    </section>
+
+    <section class="panel card stale" id="sensCard">
+      <div class="card-head">
+        <h2>Which assumptions matter most?</h2>
+        <div class="legend">
+          <span><i style="background:var(--s2)"></i>Lower value</span>
+          <span><i style="background:var(--s1)"></i>Higher value</span>
+        </div>
+      </div>
+      <p class="note" style="color:var(--ink-2)">Each assumption is moved down and up by a plausible amount while everything else stays put. Bars show where the success rate lands, starting from the current plan.</p>
+      <div class="chart" id="tornado"></div>
+      <p class="insight" id="sensInsight"></p>
+      <p class="note" id="sensNote"></p>
+    </section>
+
+    <section class="panel card stale" id="heatCard">
+      <div class="card-head">
+        <h2>Success by spending and stock allocation</h2>
+        <p>Every cell runs the same set of market paths (common random numbers), so differences between cells come from the policy, not from sampling noise. Your income, lifespan and spending rule stay as set. Click a cell to load it.</p>
       </div>
       <div class="heat-wrap"><div class="heat" id="heat" role="grid" aria-label="Success probability heatmap"></div></div>
       <div class="heat-axis">
-        <span>Rows: share in stocks. Columns: initial withdrawal rate.</span>
+        <span>Rows: share in stocks. Columns: yearly spending goal as a % of the starting portfolio<span id="heatCols"></span>.</span>
         <span class="ramp">0%<i></i>100% success</span>
       </div>
       <div class="status" id="heatStatus"></div>
     </section>
 
-    <section class="panel card">
+    <section class="panel card stale" id="seqCard">
       <div class="card-head">
         <h2>Sequence-of-returns risk</h2>
-        <p>Two retirees can earn the same average return and get opposite outcomes. What matters is when the bad years arrive.</p>
+        <p id="seqIntro">Two retirees can earn the same average return and get opposite outcomes. What matters is when the bad years arrive.</p>
       </div>
       <div class="two">
         <div class="sub">
           <h3>Same returns, different order</h3>
-          <div class="legend" id="seqLegend">
+          <div class="legend">
             <span><i class="line" style="background:var(--s2)"></i>Worst years first</span>
             <span><i class="line" style="background:var(--s1)"></i>Simulated order</span>
             <span><i class="line" style="background:var(--s3)"></i>Best years first</span>
@@ -368,24 +506,28 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       <h2>How the model works</h2>
       <div class="method">
         <div>
-          <h3>Returns</h3>
-          <p>Each simulated year draws real stock and bond returns. In lognormal mode, log-returns are bivariate normal and correlated through a Cholesky factor: <span class="mono">z<sub>b</sub> = ρz<sub>s</sub> + √(1−ρ²)·z₂</span>. The log-space parameters, including ρ, are solved so that the arithmetic means, standard deviations and correlation match the inputs exactly. Fat-tail mode is a two-regime mixture: 10% of years have twice the volatility, for stocks and bonds together, with the same mean and overall volatility, so crashes are more frequent.</p>
+          <h3>Where the numbers come from</h3>
+          <p>This page has no finance code of its own. It sends your inputs to <code>retirement_mc/web.py</code>, the repository's Python package running in your browser with Pyodide, and draws what comes back. With the same seed, every number matches running the package on a laptop (NumPy's PCG64 generator); the default inputs reproduce the README's 89.4% for the 4% rule.</p>
         </div>
         <div>
-          <h3>Spending</h3>
-          <p>Fees are charged on assets each year. Withdrawals come out at the start of each year in today’s dollars, so the fixed rule is the inflation-adjusted “4% rule” framing. A path fails in the first year the balance cannot cover that year’s withdrawal, or if spending ever falls below 80% of the starting amount. Guardrails follow a simplified Guyton–Klinger rule: if the current withdrawal rate drifts 20% above the starting rate, spending is cut 10% (skipped in the final 15 years); if it drifts 20% below, spending rises 10%.</p>
+          <h3>Returns</h3>
+          <p>Each simulated year draws real stock and bond returns. Lognormal mode makes log-returns bivariate normal, with parameters solved so the arithmetic means, volatilities and correlation match the inputs exactly. Fat tails is a two-regime mixture: 10% of years have twice the volatility, with the same mean and overall volatility. History stitches together random 5-year blocks of actual 1928–2025 returns.</p>
+        </div>
+        <div>
+          <h3>Income and lifespans</h3>
+          <p>Guaranteed income covers part of spending; the portfolio covers the rest. Social Security follows current claiming rules (70% of the full benefit at 62, 124% at 70). Random lifespans follow the Gompertz law of mortality, and annuities are priced from the same survival curve with a 5% insurer load. With random lifespans, success means every year you were alive was funded.</p>
         </div>
         <div>
           <h3>Estimation</h3>
-          <p>Success probability is <span class="mono">p̂ = successes ⁄ N</span>, with standard error <span class="mono">√(p̂(1−p̂)⁄N)</span> and a 95% Wilson score interval, which stays honest even when every path succeeds. With antithetic variates on, the SE and interval come from the variance of pair averages over N⁄2 pairs. The interval covers sampling error only, not uncertainty about the assumptions themselves. A seeded generator (Mulberry32 with Box–Muller normals) makes every run reproducible.</p>
+          <p>Success probability is <span class="mono">p̂ = successes ⁄ N</span>, with a 95% Wilson score interval that stays honest even when every path succeeds. The interval covers sampling error only, not uncertainty about the assumptions, which the sensitivity chart and the alternative-assumptions line address. Comparisons, the heatmap and the sensitivity chart use common random numbers, so their differences are not sampling noise.</p>
         </div>
         <div>
           <h3>Not modeled</h3>
           <ul>
-            <li>Taxes, Social Security, pensions and annuity income</li>
-            <li>Mortality: the horizon is fixed, not a life expectancy</li>
-            <li>Mean reversion, regimes and inflation shocks: years are independent and identically distributed</li>
-            <li>Spending changes over retirement beyond the guardrail rule</li>
+            <li>Taxes, required minimum distributions and account types</li>
+            <li>Spousal and survivor benefits; one retiree only</li>
+            <li>Inflation shocks and regimes: inflation is constant and returns are independent from year to year (except in History mode)</li>
+            <li>Spending changes over retirement beyond the spending rules</li>
           </ul>
         </div>
       </div>
@@ -396,265 +538,110 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
 <script>
 (function () {
   "use strict";
+  // All finance math happens in Python (retirement_mc/web.py). This script:
+  //   1. talks to the Python worker,
+  //   2. reads and writes the form,
+  //   3. draws charts from the results.
   const $ = (id) => document.getElementById(id);
 
-  const PRESETS = {
-    hist: { ms: 8.6, ss: 19.3, mb: 1.8, sb: 8.9, rho: 0.09 },
-    low:  { ms: 5.5, ss: 17, mb: 1.5, sb: 6, rho: 0.20 }
+  // ====================================================================
+  // 1. Talking to Python
+  // ====================================================================
+  const worker = new Worker("pyodide-worker.js", { type: "module" });
+  const pending = new Map();
+  let nextId = 0;
+  worker.onmessage = ({ data }) => {
+    if (data.status) { $("loadStatus").textContent = data.status; return; }
+    if (data.ready) { $("loading").hidden = true; return; }
+    if (data.fatal) { showError(`Python couldn't start in this browser: ${data.fatal}. The demo needs a recent Chrome, Edge, Firefox or Safari; the full results are in the README on GitHub.`); return; }
+    const p = pending.get(data.id); if (!p) return;
+    pending.delete(data.id);
+    data.error ? p.reject(new Error(data.error)) : p.resolve(data.result);
   };
-
-  // ---------- random numbers ----------
-  function mulberry32(a) {
-    return function () {
-      a |= 0; a = (a + 0x6D2B79F5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
+  worker.onerror = (e) => showError(`The Python worker failed to load (${e.message || "unknown error"}).`);
+  // Call a function in retirement_mc/web.py, e.g. py("run", {inputs}).
+  function py(fn, args) {
+    return new Promise((resolve, reject) => {
+      const id = ++nextId;
+      pending.set(id, { resolve, reject });
+      worker.postMessage({ id, fn, args });
+    });
   }
-  function makeNormal(rng) {
-    let spare = null;
-    return function () {
-      if (spare !== null) { const s = spare; spare = null; return s; }
-      let u = 0; while (u === 0) u = rng();
-      const v = rng(), r = Math.sqrt(-2 * Math.log(u));
-      spare = r * Math.sin(2 * Math.PI * v);
-      return r * Math.cos(2 * Math.PI * v);
-    };
+  function showError(msg) { $("loading").hidden = true; const e = $("error"); e.hidden = false; e.textContent = msg; }
+
+  // ====================================================================
+  // 2. The form
+  // ====================================================================
+  const fields = () => document.querySelectorAll("[data-key]");
+  function readInputs() {
+    const x = {};
+    fields().forEach((el) => {
+      const k = el.dataset.key;
+      if (el.type === "radio") { if (el.checked) x[k] = el.value; return; }
+      if (el.type === "checkbox") { x[k] = el.checked; return; }
+      let v = el.value;
+      if (el.type === "number" || el.type === "range" || "num" in el.dataset) v = v === "" ? null : parseFloat(v);
+      if ("pct" in el.dataset && v !== null) v = v / 100;
+      x[k] = v;
+    });
+    return x;
+  }
+  function writeInputs(x) {
+    fields().forEach((el) => {
+      const k = el.dataset.key; if (!(k in x)) return;
+      if (el.type === "radio") el.checked = el.value === x[k];
+      else if (el.type === "checkbox") el.checked = !!x[k];
+      else if ("pct" in el.dataset) el.value = +(x[k] * 100).toFixed(2);
+      else el.value = x[k];
+    });
+    updateForm();
+  }
+  // Show fields that depend on other fields, and the live labels next to sliders.
+  function updateForm() {
+    const x = readInputs();
+    document.querySelectorAll("[data-show]").forEach((el) => {
+      const [k, v] = el.dataset.show.split("=");
+      el.hidden = v === undefined ? !x[k] : x[k] !== v;
+    });
+    $("stockOut").textContent = `${Math.round(x.stock_share * 100)}% / ${Math.round(100 - x.stock_share * 100)}%`;
+    $("feeOut").textContent = (x.fee * 100).toFixed(2) + "%";
+    $("horizonOut").textContent = x.horizon_years + " years";
+    $("modalOut").textContent = x.modal_age;
+    $("ssAgeOut").textContent = x.ss_claim_age;
+    $("ruleHint").textContent = {
+      fixed: "Same inflation-adjusted amount every year, whatever markets do.",
+      guardrails: "Spending flexes: cut 10% when the withdrawal rate runs 20% high, raise 10% when it runs 20% low. Success also needs spending to stay at or above 80% of the goal.",
+      essentials_first: "Guardrails, but cuts come only out of discretionary spending. Success means the essentials were always covered."
+    }[x.rule];
+    $("modelHint").textContent = {
+      lognormal: "Log-returns are bivariate normal, matched to the means, volatilities and correlation below.",
+      fat_tailed: "Same means and volatilities, but 10% of years come from a regime with twice the volatility: more crashes.",
+      bootstrap: "Replays random 5-year blocks of actual 1928–2025 returns. The return and volatility boxes don't apply."
+    }[x.model];
+    $("marketFields").style.opacity = x.model === "bootstrap" ? 0.5 : 1;
   }
 
-  // ---------- formatting ----------
+  // ====================================================================
+  // 3. Formatting and chart helpers
+  // ====================================================================
   function money(v) {
+    if (v === null || v === undefined) return "–";
     const a = Math.abs(v);
-    if (a >= 1e6) return "$" + (v / 1e6).toFixed(a >= 1e7 ? 1 : 2) + "M";
-    if (a >= 1e3) return "$" + Math.round(v / 1e3) + "k";
-    return "$" + Math.round(v);
+    const sign = v < 0 ? "−" : "";
+    if (a >= 1e6) return sign + "$" + (a / 1e6).toFixed(a >= 1e7 ? 1 : 2) + "M";
+    if (a >= 1e3) return sign + "$" + Math.round(a / 1e3) + "k";
+    return sign + "$" + Math.round(a);
   }
   const moneyFull = (v) => "$" + Math.round(v).toLocaleString("en-US");
   const pct = (p, d = 1) => (p * 100).toFixed(d) + "%";
+  const pts = (d) => (d >= 0 ? "+" : "−") + Math.abs(d * 100).toFixed(1) + " pts";
   function niceStep(max, n) {
     if (max <= 0) return 1;
     const raw = max / n, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
     return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
   }
-
-  // ---------- inputs ----------
-  function readCfg() {
-    const num = (id, d) => { const v = parseFloat($(id).value); return isFinite(v) ? v : d; };
-    return {
-      S: Math.max(1000, num("start", 1e6)),
-      rate: num("rate", 4) / 100,
-      T: Math.round(num("years", 30)),
-      stock: num("stock", 60),
-      rule: document.querySelector('input[name=rule]:checked').value,
-      fee: num("fee", 0.5) / 100,
-      model: document.querySelector('input[name=model]:checked').value,
-      ms: num("ms", 8) / 100, ss: Math.max(0, num("ss", 19)) / 100,
-      mb: num("mb", 2.5) / 100, sb: Math.max(0, num("sb", 8)) / 100,
-      rho: Math.max(-0.95, Math.min(0.95, num("rho", 0.1))),
-      N: parseInt($("nsim").value, 10),
-      seed: Math.round(num("seed", 3044)),
-      target: num("target", 0.9),
-      preset: $("preset").value,
-      anti: $("anti").checked
-    };
-  }
-
-  // ---------- calibration (arithmetic mean, sd and correlation are matched exactly) ----------
-  // Regimes: [probabilities, volatility multipliers]. "fat" = 10% of years at twice the volatility.
-  const REGIMES = { normal: [[1], [1]], fat: [[0.9, 0.1], [1, 2]] };
-  function bisect(f, lo, hi) {
-    let flo = f(lo);
-    for (let i = 0; i < 200 && hi - lo > 1e-12; i++) {
-      const mid = (lo + hi) / 2, fm = f(mid);
-      if ((fm < 0) === (flo < 0)) { lo = mid; flo = fm; } else hi = mid;
-    }
-    return (lo + hi) / 2;
-  }
-  function mixExp(model, a, sig) {
-    const [p, k] = REGIMES[model]; let s = 0;
-    for (let i = 0; i < p.length; i++) s += p[i] * Math.exp(0.5 * (a * k[i] * sig) ** 2);
-    return s;
-  }
-  // Log-space (mu, sigma) so that 1 + R = exp(mu + sigma * k * z) has the target arithmetic mean and sd.
-  function calibMarginal(mean, sd, model) {
-    if (sd <= 0) return [Math.log(1 + mean), 0];
-    const target = 1 + (sd * sd) / ((1 + mean) ** 2);
-    const sig = bisect((x) => mixExp(model, 2, x) / mixExp(model, 1, x) ** 2 - target, 0, 3);
-    return [Math.log(1 + mean) - Math.log(mixExp(model, 1, sig)), sig];
-  }
-  function arithCorr(r, ss, sb, model) {
-    const [p, k] = REGIMES[model]; let exy = 0;
-    for (let i = 0; i < p.length; i++) exy += p[i] * Math.exp(0.5 * k[i] * k[i] * (ss * ss + sb * sb + 2 * r * ss * sb));
-    const ex = mixExp(model, 1, ss), ey = mixExp(model, 1, sb);
-    return (exy - ex * ey) / Math.sqrt((mixExp(model, 2, ss) - ex * ex) * (mixExp(model, 2, sb) - ey * ey));
-  }
-  // Log-space correlation that produces the requested correlation of arithmetic returns.
-  function calibCorr(target, ss, sb, model) {
-    if (ss <= 0 || sb <= 0) return 0;
-    const f = (r) => arithCorr(r, ss, sb, model) - target;
-    if (f(-0.999999) > 0) return -0.999999;
-    if (f(0.999999) < 0) return 0.999999;
-    return bisect(f, -0.999999, 0.999999);
-  }
-
-  // ---------- return generation (cached; common random numbers) ----------
-  const mainCache = { key: null }, altCache = { key: null };
-  function getReturns(c, store = mainCache) {
-    const key = [c.N, c.T, c.seed, c.model, c.ms, c.ss, c.mb, c.sb, c.rho, c.anti].join("|");
-    if (store.key === key) return store;
-    const { N, T } = c, model = c.model;
-    const Rs = new Float64Array(N * T), Rb = new Float64Array(N * T);
-    const rng = mulberry32(c.seed), nrm = makeNormal(rng);
-    const [lmS, lsS] = calibMarginal(c.ms, c.ss, model);
-    const [lmB, lsB] = calibMarginal(c.mb, c.sb, model);
-    const rho = calibCorr(c.rho, lsS, lsB, model), rc = Math.sqrt(1 - rho * rho);
-    const [probs, mults] = REGIMES[model];
-    const step = c.anti ? 2 : 1;
-    for (let i = 0; i < N; i += step) {
-      for (let t = 0; t < T; t++) {
-        const z1 = nrm(), z2 = nrm();
-        const k = probs.length > 1 && rng() < probs[1] ? mults[1] : 1;   // regime shared by both assets
-        for (let a = 0; a < step && i + a < N; a++) {
-          const sg = a ? -1 : 1;
-          const e1 = sg * z1 * k, e2 = sg * (rho * z1 + rc * z2) * k;
-          const idx = (i + a) * T + t;
-          Rs[idx] = Math.exp(lmS + lsS * e1) - 1;
-          Rb[idx] = Math.exp(lmB + lsB * e2) - 1;
-        }
-      }
-    }
-    Object.assign(store, { key, Rs, Rb, N, T });
-    return store;
-  }
-
-  // ---------- one retirement path ----------
-  // Success = every year's spending was funded AND spending never fell below FLOOR x the starting amount.
-  const FLOOR = 0.8;
-  const OUT = { fail: 0, B: 0, minW: 0, cut: 0, ok: 1 };
-  function runPath(Rs, Rb, off, T, w, fee, rate, guard, bal, boff) {
-    let B = 1, W = rate, minW = rate, cut = 0, fail = 0;
-    if (bal) bal[boff] = 1;
-    for (let t = 0; t < T; t++) {
-      if (guard && t > 0 && B > 0) {
-        const cwr = W / B;
-        if (cwr > rate * 1.2 && T - t > 15) { W *= 0.9; cut = 1; }
-        else if (cwr < rate * 0.8) W *= 1.1;
-      }
-      if (B < W) {
-        // Shortfall: this year only what is left can be spent, and nothing in later years.
-        fail = t + 1;
-        minW = t + 1 < T ? 0 : Math.min(minW, B);
-        B = 0;
-        if (bal) for (let u = t + 1; u <= T; u++) bal[boff + u] = 0;
-        break;
-      }
-      if (W < minW) minW = W;          // spending actually funded this year
-      const r = (1 + w * Rs[off + t] + (1 - w) * Rb[off + t]) * (1 - fee) - 1;   // fee charged on assets
-      B = (B - W) * (1 + r);
-      if (bal) bal[boff + t + 1] = B;
-    }
-    OUT.fail = fail; OUT.B = B; OUT.minW = minW; OUT.cut = cut;
-    OUT.ok = !fail && minW >= FLOOR * rate - 1e-12 ? 1 : 0;
-  }
-
-  function seStats(okArr, N, anti) {
-    let s = 0; for (let i = 0; i < N; i++) s += okArr[i];
-    const p = s / N;
-    let se;
-    if (anti) {
-      const M = N / 2; let ss = 0;
-      for (let k = 0; k < M; k++) { const m = (okArr[2 * k] + okArr[2 * k + 1]) / 2; ss += (m - p) * (m - p); }
-      se = Math.sqrt(ss / (M - 1) / M);
-    } else se = Math.sqrt(p * (1 - p) / N);
-    return { p, se, naive: Math.sqrt(p * (1 - p) / N) };
-  }
-
-  // Wilson score interval: stays inside [0, 1] and never claims zero uncertainty at 0% or 100%.
-  function wilson(p, n, z = 1.96) {
-    const d = 1 + (z * z) / n, center = (p + (z * z) / (2 * n)) / d;
-    const half = (z / d) * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
-    return [Math.max(0, center - half), Math.min(1, center + half)];
-  }
-
-  // Success rate of the same plan under a different set of market assumptions (same seed and settings).
-  function altSuccess(c) {
-    const alt = c.preset === "low" ? PRESETS.hist : PRESETS.low;
-    const ac = { ...c, ms: alt.ms / 100, ss: alt.ss / 100, mb: alt.mb / 100, sb: alt.sb / 100, rho: alt.rho };
-    const R = getReturns(ac, altCache), w = c.stock / 100, guard = c.rule === "guard";
-    let ok = 0;
-    for (let i = 0; i < c.N; i++) { runPath(R.Rs, R.Rb, i * c.T, c.T, w, c.fee, c.rate, guard, null, 0); ok += OUT.ok; }
-    return { p: ok / c.N, label: c.preset === "low" ? "US history 1928–2025 assumptions" : "muted forward-looking assumptions" };
-  }
-
-  function quantileSorted(a, q) { return a[Math.min(a.length - 1, Math.max(0, Math.floor(q * (a.length - 1))))]; }
-
-  // ---------- main simulation ----------
-  function simulate(c, R) {
-    const { N, T } = c, w = c.stock / 100, guard = c.rule === "guard";
-    const bal = new Float64Array(N * (T + 1)), ok = new Uint8Array(N), fails = [], endB = new Float64Array(N);
-    const minW = new Float64Array(N); let cuts = 0, below = 0;
-    for (let i = 0; i < N; i++) {
-      runPath(R.Rs, R.Rb, i * T, T, w, c.fee, c.rate, guard, bal, i * (T + 1));
-      ok[i] = OUT.ok; if (OUT.fail) fails.push(OUT.fail);
-      endB[i] = OUT.B; minW[i] = OUT.minW; cuts += OUT.cut;
-      if (OUT.minW < FLOOR * c.rate - 1e-12) below++;
-    }
-    const st = seStats(ok, N, c.anti);
-    // percentiles by year
-    const qs = [0.1, 0.25, 0.5, 0.75, 0.9];
-    const pcts = qs.map(() => new Float64Array(T + 1));
-    const tmp = new Float64Array(N);
-    for (let t = 0; t <= T; t++) {
-      for (let i = 0; i < N; i++) tmp[i] = bal[i * (T + 1) + t];
-      tmp.sort();
-      qs.forEach((q, j) => { pcts[j][t] = quantileSorted(tmp, q); });
-    }
-    // fraction still funded after year t
-    const alive = new Float64Array(T + 1); alive[0] = 1;
-    const failCount = new Int32Array(T + 2); fails.forEach((f) => failCount[f]++);
-    let cum = 0; for (let t = 1; t <= T; t++) { cum += failCount[t]; alive[t] = 1 - cum / N; }
-    const endSorted = Float64Array.from(endB).sort();
-    const failsSorted = fails.slice().sort((a, b) => a - b);
-    const minWSorted = Float64Array.from(minW).sort();
-
-    // sequence risk: portfolio returns per path
-    const L = Math.min(10, Math.floor(T / 2));
-    const first = new Float64Array(N), last = new Float64Array(N), whole = new Float64Array(N);
-    for (let i = 0; i < N; i++) {
-      let a = 0, b = 0, s = 0; const off = i * T;
-      for (let t = 0; t < T; t++) {
-        const lr = Math.log(Math.max(1e-9, (1 + w * R.Rs[off + t] + (1 - w) * R.Rb[off + t]) * (1 - c.fee)));
-        s += lr; if (t < L) a += lr; if (t >= T - L) b += lr;
-      }
-      first[i] = a / L; last[i] = b / L; whole[i] = s / T;
-    }
-    function quintiles(arr) {
-      const idx = Array.from({ length: N }, (_, i) => i).sort((x, y) => arr[x] - arr[y]);
-      const out = [];
-      for (let q = 0; q < 5; q++) {
-        const lo = Math.floor(q * N / 5), hi = Math.floor((q + 1) * N / 5);
-        let s = 0, rs = 0; for (let j = lo; j < hi; j++) { s += ok[idx[j]]; rs += arr[idx[j]]; }
-        out.push({ succ: s / (hi - lo), ret: Math.exp(rs / (hi - lo)) - 1 });
-      }
-      return out;
-    }
-    const qFirst = quintiles(first), qLast = quintiles(last);
-
-    // median-return path, reordered
-    const order = Array.from({ length: N }, (_, i) => i).sort((x, y) => whole[x] - whole[y]);
-    const mid = order[Math.floor(N / 2)];
-    const rets = []; for (let t = 0; t < T; t++) rets.push((1 + w * R.Rs[mid * T + t] + (1 - w) * R.Rb[mid * T + t]) * (1 - c.fee) - 1);
-    const variants = [rets.slice().sort((a, b) => a - b), rets.slice(), rets.slice().sort((a, b) => b - a)].map((r) => {
-      const arr = Float64Array.from(r), b = new Float64Array(T + 1);
-      runPath(arr, arr, 0, T, 1, 0, c.rate, guard, b, 0);
-      return { bal: b, fail: OUT.fail, end: OUT.B };
-    });
-
-    return { c, st, pcts, alive, endSorted, failsSorted, minWSorted, cuts, below, qFirst, qLast, L, variants, geo: Math.exp(whole[mid]) - 1 };
-  }
-
-  // ---------- tooltip helper ----------
+  const row = (k, v) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
+  const sw = (c) => `<i class="sw" style="background:${c}"></i>`;
   function tipFor(container) {
     let tip = container.querySelector(".tip");
     if (!tip) { tip = document.createElement("div"); tip.className = "tip"; tip.setAttribute("role", "status"); container.appendChild(tip); }
@@ -669,140 +656,268 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       hide() { tip.style.opacity = 0; }
     };
   }
-
-  // ---------- fan chart ----------
-  function renderFan(res) {
-    const el = $("fan"), { c, pcts, alive } = res, T = c.T, S = c.S;
-    const W = Math.max(300, el.clientWidth), H = Math.round(Math.max(230, Math.min(340, W * 0.42)));
-    const m = { l: 58, r: 14, t: 10, b: 30 };
-    const dataMax = Math.max(...pcts[4]) * S;
-    const stepY = niceStep(dataMax, 4), yMax = Math.max(stepY, Math.ceil(dataMax / stepY) * stepY);
-    const x = (t) => m.l + (t / T) * (W - m.l - m.r);
-    const y = (v) => H - m.b - (v * S / yMax) * (H - m.t - m.b);
+  // Shared axes for charts with ages along the bottom.
+  function frame(el, opts) {
+    const W = Math.max(300, el.clientWidth), H = opts.H || Math.round(Math.max(230, Math.min(330, W * 0.4)));
+    const m = { l: opts.left || 58, r: 14, t: 10, b: 30 };
+    const [a0, a1] = opts.ages;
+    const x = (age) => m.l + ((age - a0) / Math.max(1, a1 - a0)) * (W - m.l - m.r);
+    const y = (v) => H - m.b - (v / opts.yMax) * (H - m.t - m.b);
     let g = "";
-    for (let v = 0; v <= yMax + 1e-6; v += stepY) {
-      const yy = H - m.b - (v / yMax) * (H - m.t - m.b);
-      g += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" stroke="${v === 0 ? "var(--axis)" : "var(--grid)"}" stroke-width="1"/>`;
-      g += `<text class="axis-label" x="${m.l - 8}" y="${yy + 4}" text-anchor="end">${money(v)}</text>`;
+    for (let v = 0; v <= opts.yMax + 1e-9; v += opts.yStep) {
+      g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? "var(--axis)" : "var(--grid)"}"/>`;
+      g += `<text class="axis-label" x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${opts.yFmt(v)}</text>`;
     }
-    const xStep = T > 30 ? 10 : 5;
-    for (let t = 0; t <= T; t += xStep) g += `<text class="axis-label" x="${x(t)}" y="${H - m.b + 18}" text-anchor="middle">${t === 0 ? "Start" : "Yr " + t}</text>`;
-    const band = (lo, hi) => {
-      let d = ""; for (let t = 0; t <= T; t++) d += (t ? "L" : "M") + x(t).toFixed(1) + "," + y(hi[t]).toFixed(1);
-      for (let t = T; t >= 0; t--) d += "L" + x(t).toFixed(1) + "," + y(lo[t]).toFixed(1);
-      return d + "Z";
+    // Age labels: "Age 62" at the first whole age, then every 5 (or 10) years, skipping any that would crowd it.
+    const span = a1 - a0, step = span > 40 ? 10 : 5, first = Math.ceil(a0);
+    g += `<text class="axis-label" x="${x(first)}" y="${H - m.b + 18}" text-anchor="${first % step ? "start" : "middle"}">Age ${first}</text>`;
+    for (let a = Math.ceil(first / step) * step; a <= a1; a += step) {
+      if (a - first < step * 0.8) continue;
+      g += `<text class="axis-label" x="${x(a)}" y="${H - m.b + 18}" text-anchor="middle">${a}</text>`;
+    }
+    // Pointer position -> nearest whole age.
+    const ageAt = (ev, svgEl) => {
+      const r = svgEl.getBoundingClientRect(), sx = (ev.clientX - r.left) * (W / r.width);
+      return Math.max(a0, Math.min(a1, Math.round(a0 + ((sx - m.l) / (W - m.l - m.r)) * (a1 - a0))));
     };
-    let med = ""; for (let t = 0; t <= T; t++) med += (t ? "L" : "M") + x(t).toFixed(1) + "," + y(pcts[2][t]).toFixed(1);
-    const startY = y(1);
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Percentile bands of real portfolio value by year">
-      ${g}
-      <path d="${band(pcts[0], pcts[4])}" fill="var(--band-outer)"/>
-      <path d="${band(pcts[1], pcts[3])}" fill="var(--band-inner)"/>
-      <line x1="${m.l}" x2="${W - m.r}" y1="${startY}" y2="${startY}" stroke="var(--ink-2)" stroke-width="1" stroke-dasharray="3 4" opacity="0.6"/>
-      <text class="axis-label" x="${m.l + 6}" y="${startY - 8}" text-anchor="start">Starting value</text>
-      <path d="${med}" fill="none" stroke="var(--band-line)" stroke-width="2" stroke-linejoin="round"/>
-      <line id="fanX" y1="${m.t}" y2="${H - m.b}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/>
-      <circle id="fanDot" r="4.5" fill="var(--band-line)" stroke="var(--surface)" stroke-width="2" opacity="0"/>
-      <rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent" id="fanHit"/>
-    </svg>`;
-    const tip = tipFor(el), hit = el.querySelector("#fanHit"), xl = el.querySelector("#fanX"), dot = el.querySelector("#fanDot");
-    const move = (ev) => {
-      const r = el.getBoundingClientRect(), sx = (ev.clientX - r.left) * (W / r.width);
-      const t = Math.max(0, Math.min(T, Math.round(((sx - m.l) / (W - m.l - m.r)) * T)));
-      const px = x(t);
-      xl.setAttribute("x1", px); xl.setAttribute("x2", px); xl.setAttribute("opacity", 0.5);
-      dot.setAttribute("cx", px); dot.setAttribute("cy", y(pcts[2][t])); dot.setAttribute("opacity", 1);
-      const row = (k, v) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
-      tip.show(px * (r.width / W), (y(pcts[2][t])) * (r.width / W),
-        `<div><b>${t === 0 ? "Start" : "End of year " + t}</b></div>` +
-        row("90th", money(pcts[4][t] * S)) + row("75th", money(pcts[3][t] * S)) + row("Median", money(pcts[2][t] * S)) +
-        row("25th", money(pcts[1][t] * S)) + row("10th", money(pcts[0][t] * S)) + row("Still funded", pct(alive[t])));
-    };
-    hit.addEventListener("pointermove", move);
-    hit.addEventListener("pointerleave", () => { tip.hide(); xl.setAttribute("opacity", 0); dot.setAttribute("opacity", 0); });
+    const hit = `<rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent" class="hit"/>`;
+    return { W, H, m, x, y, g, ageAt, hit, scale: () => el.getBoundingClientRect().width / W };
+  }
+  const linePath = (xs, ys, x, y) => xs.map((a, i) => (i ? "L" : "M") + x(a).toFixed(1) + "," + y(ys[i]).toFixed(1)).join("");
 
-    // table
-    let rows = "";
-    for (let t = 0; t <= T; t += 5) rows += `<tr><td>${t === 0 ? "Start" : "Year " + t}</td>${[0, 1, 2, 3, 4].map((j) => `<td>${moneyFull(pcts[j][t] * S)}</td>`).join("")}<td>${pct(alive[t])}</td></tr>`;
-    if (T % 5) rows += `<tr><td>Year ${T}</td>${[0, 1, 2, 3, 4].map((j) => `<td>${moneyFull(pcts[j][T] * S)}</td>`).join("")}<td>${pct(alive[T])}</td></tr>`;
-    $("fanTable").innerHTML = `<table class="data"><thead><tr><th>Year</th><th>10th</th><th>25th</th><th>Median</th><th>75th</th><th>90th</th><th>Still funded</th></tr></thead><tbody>${rows}</tbody></table>`;
+  // ====================================================================
+  // 4. Charts
+  // ====================================================================
+  const STREAM_COLORS = { "Social Security": "var(--s1)", Pension: "var(--s3)" };
+  const streamColor = (name) => name.startsWith("Social Security") ? STREAM_COLORS["Social Security"] : STREAM_COLORS[name] || "var(--s4)";
+
+  function renderIncome(res) {
+    const el = $("income"), inc = res.income, ages = inc.ages, streams = inc.streams, S = inc.spending;
+    const legend = streams.map((s) => `<span><i style="background:${streamColor(s.name)}"></i>${s.name.replace(/ \(claim at \d+\)/, "")}</span>`).join("") +
+      `<span><i style="background:var(--gap-fill)"></i>From the portfolio</span><span><i class="dash" style="color:var(--ink)"></i>Spending goal</span>`;
+    $("incomeLegend").innerHTML = legend;
+    const totals = ages.map((_, i) => streams.reduce((s, st) => s + st.values[i], 0));
+    const dataMax = Math.max(S, ...totals) * 1.08 || 1;
+    const yStep = niceStep(dataMax, 4), yMax = Math.ceil(dataMax / yStep) * yStep;
+    const f = frame(el, { ages: [ages[0] - 0.5, ages[ages.length - 1] + 0.5], yMax, yStep, yFmt: money, H: 230 });
+    const bw = Math.max(1, (f.x(ages[0] + 1) - f.x(ages[0])) * 0.78);
+    let bars = "";
+    ages.forEach((a, i) => {
+      let base = 0;
+      const x0 = f.x(a) - bw / 2;
+      streams.forEach((st) => {
+        const v = st.values[i]; if (v <= 0) return;
+        bars += `<rect x="${x0.toFixed(1)}" y="${f.y(base + v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(f.y(base) - f.y(base + v)).toFixed(1)}" fill="${streamColor(st.name)}"/>`;
+        base += v;
+      });
+      const gap = Math.max(S - base, 0);
+      if (gap > 0) bars += `<rect x="${x0.toFixed(1)}" y="${f.y(base + gap).toFixed(1)}" width="${bw.toFixed(1)}" height="${(f.y(base) - f.y(base + gap)).toFixed(1)}" fill="var(--gap-fill)"/>`;
+    });
+    const sy = f.y(S);
+    el.innerHTML = `<svg viewBox="0 0 ${f.W} ${f.H}" height="${f.H}" role="img" aria-label="Guaranteed income and portfolio withdrawals by age">${f.g}${bars}
+      <line x1="${f.m.l}" x2="${f.W - f.m.r}" y1="${sy}" y2="${sy}" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="5 4"/>${f.hit}</svg>`;
+    const svg = el.querySelector("svg"), tip = tipFor(el);
+    svg.querySelector(".hit").addEventListener("pointermove", (ev) => {
+      const a = Math.max(ages[0], Math.min(ages[ages.length - 1], f.ageAt(ev, svg))), i = a - ages[0], k = f.scale();
+      let html = `<div><b>Age ${a}</b></div>`;
+      streams.forEach((st) => { if (st.values[i] > 0) html += row(sw(streamColor(st.name)) + st.name.replace(/ \(claim at \d+\)/, ""), money(st.values[i])); });
+      html += row(sw("var(--gap-fill)") + "From portfolio", money(Math.max(S - totals[i], 0)));
+      tip.show(f.x(a) * k, (ev.clientY - svg.getBoundingClientRect().top), html);
+    });
+    svg.querySelector(".hit").addEventListener("pointerleave", () => tip.hide());
+
+    const fy = res.first_year;
+    let text;
+    if (!streams.length) {
+      text = `No guaranteed income yet, so the portfolio pays for everything: ${moneyFull(S)} a year, a ${pct(fy.rate)} withdrawal rate. Turn on Social Security, a pension or an annuity on the left to see how income changes the odds.`;
+    } else {
+      const last = totals[totals.length - 1];
+      const later = streams.filter((s) => s.start_age > ages[0]).map((s) => `${s.name.replace(/ \(claim at \d+\)/, "")} from ${s.start_age}`);
+      text = `In the first year the portfolio supplies ${moneyFull(fy.withdrawal)} (a ${fy.rate === null ? "–" : pct(fy.rate)} withdrawal rate)` +
+        (later.length ? `, until ${later.join(" and ")} takes over part of the bill` : "") + `. ` +
+        `By age ${ages[ages.length - 1]}, guaranteed income covers ${pct(Math.min(1, last / S), 0)} of the ${money(S)} goal` +
+        (streams.some((s) => !s.inflation_adjusted) ? `; fixed-dollar income shrinks every year in today's dollars as prices rise.` : ".");
+      if (res.inputs.rule !== "fixed") text += " Bars show planned spending; under guardrails actual spending moves with markets.";
+    }
+    $("incomeInsight").textContent = text;
   }
 
-  // ---------- sequence lines ----------
-  function renderSeq(res) {
-    const el = $("seq"), { c, variants } = res, T = c.T, S = c.S;
-    const W = Math.max(280, el.clientWidth), H = Math.round(Math.max(220, Math.min(290, W * 0.6)));
-    const m = { l: 54, r: 12, t: 10, b: 30 };
-    const dataMax = Math.max(...variants.map((v) => Math.max(...v.bal))) * S;
-    const stepY = niceStep(dataMax, 4), yMax = Math.max(stepY, Math.ceil(dataMax / stepY) * stepY);
-    const x = (t) => m.l + (t / T) * (W - m.l - m.r);
-    const y = (v) => H - m.b - (v * S / yMax) * (H - m.t - m.b);
-    let g = "";
-    for (let v = 0; v <= yMax + 1e-6; v += stepY) {
-      const yy = H - m.b - (v / yMax) * (H - m.t - m.b);
-      g += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" stroke="${v === 0 ? "var(--axis)" : "var(--grid)"}"/>`;
-      g += `<text class="axis-label" x="${m.l - 8}" y="${yy + 4}" text-anchor="end">${money(v)}</text>`;
+  function renderFan(res) {
+    const el = $("fan"), P = res.percentiles, ages = res.curves.ages, a0 = ages[0], a1 = ages[ages.length - 1];
+    const dataMax = Math.max(...P[4], res.first_year.invested);
+    const yStep = niceStep(dataMax, 4), yMax = Math.max(yStep, Math.ceil(dataMax / yStep) * yStep);
+    const f = frame(el, { ages: [a0, a1], yMax, yStep, yFmt: money });
+    const band = (lo, hi) => linePath(ages, hi, f.x, f.y) + ages.slice().reverse().map((a, i) => "L" + f.x(a).toFixed(1) + "," + f.y(lo[lo.length - 1 - i]).toFixed(1)).join("") + "Z";
+    const sy = f.y(res.first_year.invested);
+    el.innerHTML = `<svg viewBox="0 0 ${f.W} ${f.H}" height="${f.H}" role="img" aria-label="Percentile bands of real portfolio value by age">${f.g}
+      <path d="${band(P[0], P[4])}" fill="var(--band-outer)"/><path d="${band(P[1], P[3])}" fill="var(--band-inner)"/>
+      <line x1="${f.m.l}" x2="${f.W - f.m.r}" y1="${sy}" y2="${sy}" stroke="var(--ink-2)" stroke-dasharray="3 4" opacity="0.6"/>
+      <text class="axis-label" x="${f.m.l + 6}" y="${sy - 8}">Starting value</text>
+      <path d="${linePath(ages, P[2], f.x, f.y)}" fill="none" stroke="var(--band-line)" stroke-width="2" stroke-linejoin="round"/>
+      <line class="xl" y1="${f.m.t}" y2="${f.H - f.m.b}" stroke="var(--ink-2)" opacity="0"/>
+      <circle class="dot" r="4.5" fill="var(--band-line)" stroke="var(--surface)" stroke-width="2" opacity="0"/>${f.hit}</svg>`;
+    const svg = el.querySelector("svg"), tip = tipFor(el), xl = svg.querySelector(".xl"), dot = svg.querySelector(".dot"), c = res.curves;
+    svg.querySelector(".hit").addEventListener("pointermove", (ev) => {
+      const a = f.ageAt(ev, svg), t = a - a0, k = f.scale(), px = f.x(a);
+      xl.setAttribute("x1", px); xl.setAttribute("x2", px); xl.setAttribute("opacity", 0.5);
+      dot.setAttribute("cx", px); dot.setAttribute("cy", f.y(P[2][t])); dot.setAttribute("opacity", 1);
+      tip.show(px * k, f.y(P[2][t]) * k, `<div><b>Age ${a}</b></div>` + row("90th", money(P[4][t])) + row("75th", money(P[3][t])) +
+        row("Median", money(P[2][t])) + row("25th", money(P[1][t])) + row("10th", money(P[0][t])) +
+        row("Still covering the plan", pct(c.funded[t])) + (c.alive ? row("Still alive", pct(c.alive[t])) : ""));
+    });
+    svg.querySelector(".hit").addEventListener("pointerleave", () => { tip.hide(); xl.setAttribute("opacity", 0); dot.setAttribute("opacity", 0); });
+
+    let rows = "";
+    for (let t = 0; t < ages.length; t++) {
+      if (t % 5 && t !== ages.length - 1) continue;
+      rows += `<tr><td>${ages[t]}</td>${[0, 1, 2, 3, 4].map((j) => `<td>${moneyFull(P[j][t])}</td>`).join("")}<td>${pct(c.funded[t])}</td>${c.alive ? `<td>${pct(c.alive[t])}</td>` : ""}</tr>`;
     }
-    const xStep = T > 30 ? 10 : 5;
-    for (let t = 0; t <= T; t += xStep) g += `<text class="axis-label" x="${x(t)}" y="${H - m.b + 18}" text-anchor="middle">${t === 0 ? "Start" : "Yr " + t}</text>`;
+    $("fanTable").innerHTML = `<table class="data"><thead><tr><th>Age</th><th>10th</th><th>25th</th><th>Median</th><th>75th</th><th>90th</th><th>Still covering plan</th>${c.alive ? "<th>Still alive</th>" : ""}</tr></thead><tbody>${rows}</tbody></table>`;
+    $("fanTitle").textContent = res.random_lifespan ? "Portfolio value if you live to each age" : "Range of portfolio paths";
+    const mid = Math.round((ages.length - 1) / 2);
+    $("fanInsight").textContent = `At age ${ages[mid]}, the median portfolio holds ${money(P[2][mid])} in today’s dollars. ` +
+      (P[0][ages.length - 1] > 0 ? `At ${a1}, 1 in 10 paths sits below ${money(P[0][ages.length - 1])}.` : `By ${a1}, at least 1 in 10 portfolios is empty, which is why the 10th percentile hits $0.`) +
+      (res.random_lifespan ? " Market paths don't depend on how long you live, so this is also what a retiree who reaches each age would see." : "");
+  }
+
+  // Generic line chart of shares (0–100%) by age. series: [{ages, values, color, label, dash}], area: {ages, values, color, label}
+  function shareChart(el, series, area, label) {
+    const all = series.flatMap((s) => s.ages).concat(area ? area.ages : []);
+    const a0 = Math.min(...all), a1 = Math.max(...all);
+    const f = frame(el, { ages: [a0, a1], yMax: 1, yStep: 0.25, yFmt: (v) => Math.round(v * 100) + "%", left: 46 });
+    let body = "";
+    if (area) body += `<path d="${linePath(area.ages, area.values, f.x, f.y)}L${f.x(area.ages[area.ages.length - 1])},${f.y(0)}L${f.x(area.ages[0])},${f.y(0)}Z" fill="${area.color}" opacity="0.28"/>`;
+    series.forEach((s) => { body += `<path d="${linePath(s.ages, s.values, f.x, f.y)}" fill="none" stroke="${s.color}" stroke-width="2.25" ${s.dash ? 'stroke-dasharray="6 4"' : ""} stroke-linejoin="round"/>`; });
+    el.innerHTML = `<svg viewBox="0 0 ${f.W} ${f.H}" height="${f.H}" role="img" aria-label="${label}">${f.g}${body}<line class="xl" y1="${f.m.t}" y2="${f.H - f.m.b}" stroke="var(--ink-2)" opacity="0"/>${f.hit}</svg>`;
+    const svg = el.querySelector("svg"), tip = tipFor(el), xl = svg.querySelector(".xl");
+    const at = (s, a) => { const i = a - s.ages[0]; return i >= 0 && i < s.values.length ? s.values[i] : null; };
+    svg.querySelector(".hit").addEventListener("pointermove", (ev) => {
+      const a = f.ageAt(ev, svg), k = f.scale();
+      xl.setAttribute("x1", f.x(a)); xl.setAttribute("x2", f.x(a)); xl.setAttribute("opacity", 0.5);
+      let html = `<div><b>Age ${a}</b></div>`;
+      series.forEach((s) => { const v = at(s, a); if (v !== null) html += row(sw(s.color) + s.label, pct(v)); });
+      if (area) { const v = at(area, a); if (v !== null) html += row(sw(area.color) + area.label, pct(v)); }
+      tip.show(f.x(a) * k, ev.clientY - svg.getBoundingClientRect().top, html);
+    });
+    svg.querySelector(".hit").addEventListener("pointerleave", () => { tip.hide(); xl.setAttribute("opacity", 0); });
+  }
+
+  function renderRunout(res) {
+    const c = res.curves, series = [{ ages: c.ages, values: c.funded, color: "var(--s1)", label: "Portfolio still covering the plan" }];
+    let area = null;
+    if (c.alive) {
+      series.push({ ages: c.ages, values: c.alive, color: "var(--ink-2)", label: "Still alive", dash: true });
+      area = { ages: c.ages, values: c.alive_depleted, color: "var(--crit)", label: "Alive with the portfolio exhausted" };
+    }
+    $("runoutLegend").innerHTML = `<span><i class="line" style="background:var(--s1)"></i>Portfolio still covering the plan</span>` +
+      (c.alive ? `<span><i class="dash" style="color:var(--ink-2)"></i>Still alive</span><span><i style="background:color-mix(in srgb, var(--crit) 35%, transparent)"></i>Alive, portfolio exhausted</span>` : "");
+    shareChart($("runout"), series, area, "Share of portfolios still covering the plan by age");
+    const firstBelow = (arr, lvl) => { const i = arr.findIndex((v) => v < lvl); return i < 0 ? null : c.ages[i]; };
+    const a95 = firstBelow(c.funded, 0.95), aHalf = firstBelow(c.funded, 0.5);
+    let text = a95 === null ? `Fewer than 1 in 20 portfolios run short before age ${c.ages[c.ages.length - 1]}.`
+      : `1 in 20 portfolios can no longer cover the plan by age ${a95}` + (aHalf !== null ? `, and half by age ${aHalf}.` : ".");
+    if (c.alive) {
+      let iMax = 0; c.alive_depleted.forEach((v, i) => { if (v > c.alive_depleted[iMax]) iMax = i; });
+      const halfAlive = firstBelow(c.alive, 0.5);
+      text += ` The red area is the real risk: being alive after the money runs out. It peaks at age ${c.ages[iMax]}, when ${pct(c.alive_depleted[iMax])} of retirees are in that spot` +
+        (res.income.streams.length ? " (living on guaranteed income alone)." : ".") + (halfAlive ? ` Half of retirees are still alive at ${halfAlive}.` : "");
+    }
+    $("runoutInsight").textContent = text;
+  }
+
+  function renderSummary(res) {
+    const s = res.success, sm = res.summary, x = res.inputs, rl = res.random_lifespan;
+    $("tSuccK").textContent = rl ? "Chance the money lasts as long as you do" : "Estimated success under these assumptions";
+    $("tSucc").textContent = pct(s.p);
+    const pill = $("tPill"), tgt = Math.round(x.target * 100);
+    if (s.p >= x.target) { pill.className = "pill good"; pill.textContent = `At or above your ${tgt}% target`; }
+    else { pill.className = "pill warn"; pill.textContent = `Below your ${tgt}% target`; }
+    let sub = `95% CI ${pct(s.ci_low)}–${pct(s.ci_high)} (sampling error only) · SE ${pct(s.se, 2)} over ${s.n.toLocaleString()} paths`;
+    if (x.antithetic && s.se_plain > 0) sub += ` · antithetic SE ${s.se < s.se_plain ? Math.round((1 - s.se / s.se_plain) * 100) + "% below" : "not below"} plain MC`;
+    $("tSuccSub").textContent = sub;
+    $("tAlt").textContent = res.alt ? `Under ${res.alt.label.replace(/\s*\(illustrative\)/, "").toLowerCase().replace("us history", "US history")} assumptions: ${pct(res.alt.p)}. Changing the assumptions moves this estimate far more than sampling error does.` : "";
+    $("tMedK").textContent = rl ? "Median left at death" : "Median ending balance";
+    $("tP10K").textContent = rl ? "Bad-case amount left at death" : "Bad-case ending balance";
+    $("tMed").textContent = money(sm.median_terminal);
+    $("tP10").textContent = money(sm.p10_terminal);
+    if (x.rule === "fixed") {
+      $("t4k").textContent = "When it runs short";
+      if (res.fail_age !== null) {
+        $("t4v").textContent = "Age " + res.fail_age;
+        $("t4s").textContent = `median age at the first shortfall, for the ${pct(1 - sm.funded)} of retirees who run short` + (res.income.streams.length ? `. Spending then falls to a median ${pct(sm.median_floor_if_short, 0)} of the goal.` : "");
+      } else { $("t4v").textContent = "Never"; $("t4s").textContent = "no simulated retiree ran short"; }
+    } else {
+      $("t4k").textContent = "Lowest yearly spending, median path";
+      $("t4v").textContent = pct(sm.median_lowest_spending, 0);
+      $("t4s").textContent = `of the ${money(x.spending)} goal. ${pct(sm.p_any_cut, 0)} of retirees take at least one cut; ` +
+        (x.rule === "essentials_first" ? `essentials go unfunded in ${pct(1 - sm.floor_met, 1)} of paths.` : `spending falls below 80% of the goal in ${pct(sm.p_below_floor, 1)}.`);
+    }
+  }
+
+  function renderHints(res) {
+    const x = res.inputs, fy = res.first_year;
+    $("spendHint").textContent = x.portfolio > 0 ? `${pct(x.spending / x.portfolio)} of the starting portfolio` +
+      (res.income.streams.length ? ` · year-one portfolio withdrawal ${moneyFull(fy.withdrawal)} (${fy.rate === null ? "–" : pct(fy.rate)})` : "") : "";
+    const ss = res.income.streams.find((s) => s.name.startsWith("Social Security"));
+    if (ss) $("ssHint").textContent = `Pays ${moneyFull(ss.amount)} a year from age ${ss.start_age} (${pct(ss.amount / x.ss_benefit, 0)} of the full benefit), rising with inflation. 70% at 62, 124% at 70.`;
+    const ann = res.income.streams.find((s) => "payout_rate" in s);
+    if (ann) $("annHint").textContent = `Pays ${moneyFull(ann.amount)} a year for life${ann.start_age > x.retirement_age ? " from age " + ann.start_age : ""} (${pct(ann.payout_rate, 2)} of the premium)${ann.inflation_adjusted ? ", rising with inflation" : ", fixed in dollars"}. Priced from the same mortality model, 5% insurer load.`;
+    if (res.longevity) { const L = res.longevity; $("lifeHint").textContent = `At ${x.retirement_age}: ${L.life_expectancy.toFixed(1)} more years on average; ${pct(L.p85, 0)} reach 85, ${pct(L.p95, 0)} reach 95. Success means the money lasted as long as you did.`; }
+  }
+
+  function renderSeq(res) {
+    const el = $("seq"), q = res.sequence, ro = q.reorder, a0 = res.retirement_age, T = q.horizon;
+    const ages = Array.from({ length: T + 1 }, (_, t) => a0 + t);
+    const dataMax = Math.max(...ro.balances.map((b) => Math.max(...b)));
+    const yStep = niceStep(dataMax, 4), yMax = Math.max(yStep, Math.ceil(dataMax / yStep) * yStep);
+    const f = frame(el, { ages: [a0, a0 + T], yMax, yStep, yFmt: money, left: 54, H: Math.round(Math.max(220, Math.min(290, el.clientWidth * 0.6))) });
     const cols = ["var(--s2)", "var(--s1)", "var(--s3)"];
     let lines = "";
-    variants.forEach((v, k) => {
-      const end = v.fail ? v.fail : T;
-      let d = ""; for (let t = 0; t <= end; t++) d += (t ? "L" : "M") + x(t).toFixed(1) + "," + y(v.bal[t]).toFixed(1);
-      lines += `<path d="${d}" fill="none" stroke="${cols[k]}" stroke-width="2" stroke-linejoin="round"/>`;
-      if (v.fail) lines += `<circle cx="${x(v.fail)}" cy="${y(0)}" r="4.5" fill="${cols[k]}" stroke="var(--surface)" stroke-width="2"/>`;
+    ro.balances.forEach((b, k) => {
+      const end = ro.fail_year[k] ? ro.fail_year[k] : T;
+      lines += `<path d="${linePath(ages.slice(0, end + 1), b, f.x, f.y)}" fill="none" stroke="${cols[k]}" stroke-width="2" stroke-linejoin="round"/>`;
+      if (ro.fail_year[k]) lines += `<circle cx="${f.x(a0 + ro.fail_year[k])}" cy="${f.y(0)}" r="4.5" fill="${cols[k]}" stroke="var(--surface)" stroke-width="2"/>`;
     });
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Three orderings of the same annual returns">
-      ${g}${lines}
-      <line id="seqX" y1="${m.t}" y2="${H - m.b}" stroke="var(--ink-2)" opacity="0"/>
-      <rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent" id="seqHit"/>
-    </svg>`;
-    const tip = tipFor(el), hit = el.querySelector("#seqHit"), xl = el.querySelector("#seqX");
+    el.innerHTML = `<svg viewBox="0 0 ${f.W} ${f.H}" height="${f.H}" role="img" aria-label="Three orderings of the same annual returns">${f.g}${lines}<line class="xl" y1="${f.m.t}" y2="${f.H - f.m.b}" stroke="var(--ink-2)" opacity="0"/>${f.hit}</svg>`;
+    const svg = el.querySelector("svg"), tip = tipFor(el), xl = svg.querySelector(".xl");
     const names = ["Worst first", "Simulated", "Best first"];
-    hit.addEventListener("pointermove", (ev) => {
-      const r = el.getBoundingClientRect(), sx = (ev.clientX - r.left) * (W / r.width);
-      const t = Math.max(0, Math.min(T, Math.round(((sx - m.l) / (W - m.l - m.r)) * T)));
-      xl.setAttribute("x1", x(t)); xl.setAttribute("x2", x(t)); xl.setAttribute("opacity", 0.5);
-      tip.show(x(t) * (r.width / W), (ev.clientY - r.top),
-        `<div><b>${t === 0 ? "Start" : "End of year " + t}</b></div>` +
-        variants.map((v, k) => `<div class="row"><span><i class="sw" style="background:${cols[k]}"></i>${names[k]}</span><b>${v.fail && t >= v.fail ? "Depleted" : money(v.bal[t] * S)}</b></div>`).join(""));
+    svg.querySelector(".hit").addEventListener("pointermove", (ev) => {
+      const a = f.ageAt(ev, svg), t = a - a0, k = f.scale();
+      xl.setAttribute("x1", f.x(a)); xl.setAttribute("x2", f.x(a)); xl.setAttribute("opacity", 0.5);
+      tip.show(f.x(a) * k, ev.clientY - svg.getBoundingClientRect().top, `<div><b>Age ${a}</b></div>` +
+        ro.balances.map((b, j) => row(sw(cols[j]) + names[j], ro.fail_year[j] && t >= ro.fail_year[j] ? "Depleted" : money(b[t]))).join(""));
     });
-    hit.addEventListener("pointerleave", () => { tip.hide(); xl.setAttribute("opacity", 0); });
+    svg.querySelector(".hit").addEventListener("pointerleave", () => { tip.hide(); xl.setAttribute("opacity", 0); });
+    const fate = (k) => ro.fail_year[k] ? `runs out at age ${a0 + ro.fail_year[k] - 1}` : `ends with ${money(ro.balances[k][T])}`;
+    $("seqInsight").textContent = `All three lines earn the same ${pct(ro.annualized_return)} a year after fees, from the simulated path with the median return. With the worst years first the portfolio ${fate(0)}; with the best years first it ${fate(2)}.`;
+    $("seqIntro").textContent = "Two retirees can earn the same average return and get opposite outcomes. What matters is when the bad years arrive." +
+      (res.random_lifespan ? ` These charts use a fixed horizon to age ${a0 + T}, since sequence risk is about the order of returns, not lifespan.` : "");
   }
 
-  // ---------- quintile bars ----------
   function barPath(x, y, w, h, r) {
     if (h <= 0.5) return `M${x},${y + h}H${x + w}`;
     r = Math.min(r, w / 2, h);
     return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
   }
   function renderQuint(res) {
-    const el = $("quint"), { qFirst, qLast, L } = res;
+    const el = $("quint"), Q = res.sequence.quintiles, L = Q.window, A = Q.early, B = Q.late;
     const W = Math.max(280, el.clientWidth), H = Math.round(Math.max(220, Math.min(290, W * 0.6)));
-    const m = { l: 44, r: 8, t: 10, b: 44 };
-    const y = (p) => H - m.b - p * (H - m.t - m.b);
+    const m = { l: 44, r: 8, t: 14, b: 44 }, y = (p) => H - m.b - p * (H - m.t - m.b);
     let g = "";
     for (let p = 0; p <= 1.0001; p += 0.25) {
       g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(p)}" y2="${y(p)}" stroke="${p === 0 ? "var(--axis)" : "var(--grid)"}"/>`;
       g += `<text class="axis-label" x="${m.l - 8}" y="${y(p) + 4}" text-anchor="end">${Math.round(p * 100)}%</text>`;
     }
-    const gw = (W - m.l - m.r) / 5, bw = Math.min(26, gw * 0.32), gap = 2;
-    const labels = ["Worst fifth", "2nd", "3rd", "4th", "Best fifth"];
+    const gw = (W - m.l - m.r) / 5, bw = Math.min(26, gw * 0.32), gap = 2, labels = ["Worst fifth", "2nd", "3rd", "4th", "Best fifth"];
     let bars = "";
     for (let q = 0; q < 5; q++) {
-      const cx = m.l + gw * q + gw / 2;
-      const xa = cx - bw - gap / 2, xb = cx + gap / 2;
-      bars += `<path class="qb" data-q="${q}" data-s="0" d="${barPath(xa, y(qFirst[q].succ), bw, y(0) - y(qFirst[q].succ), 4)}" fill="var(--s1)"/>`;
-      bars += `<path class="qb" data-q="${q}" data-s="1" d="${barPath(xb, y(qLast[q].succ), bw, y(0) - y(qLast[q].succ), 4)}" fill="var(--s2)"/>`;
+      const cx = m.l + gw * q + gw / 2, xa = cx - bw - gap / 2, xb = cx + gap / 2;
+      bars += `<path class="qb" data-q="${q}" d="${barPath(xa, y(A[q].success), bw, y(0) - y(A[q].success), 4)}" fill="var(--s1)"/>`;
+      bars += `<path class="qb" data-q="${q}" d="${barPath(xb, y(B[q].success), bw, y(0) - y(B[q].success), 4)}" fill="var(--s2)"/>`;
       bars += `<text class="axis-label" x="${cx}" y="${H - m.b + 17}" text-anchor="middle">${labels[q]}</text>`;
       bars += `<rect class="qhit" data-q="${q}" x="${m.l + gw * q}" y="${m.t}" width="${gw}" height="${H - m.t - m.b}" fill="transparent"/>`;
     }
-    // direct labels on the extremes of the first-decade series
-    [0, 4].forEach((q) => {
-      const cx = m.l + gw * q + gw / 2, xa = cx - bw - gap / 2;
-      bars += `<text x="${xa + bw / 2}" y="${y(qFirst[q].succ) - 6}" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">${Math.round(qFirst[q].succ * 100)}%</text>`;
-    });
+    [0, 4].forEach((q) => { const xa = m.l + gw * q + gw / 2 - bw - gap / 2; bars += `<text x="${xa + bw / 2}" y="${y(A[q].success) - 6}" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">${Math.round(A[q].success * 100)}%</text>`; });
     bars += `<text class="axis-label" x="${(m.l + W - m.r) / 2}" y="${H - 6}" text-anchor="middle">Paths ranked by annualized return in that ${L}-year window</text>`;
     el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Success rate by return quintile">${g}${bars}</svg>`;
     const tip = tipFor(el);
@@ -810,140 +925,220 @@ details.tbl .scroll { overflow-x: auto; margin-top: 8px; }
       h.addEventListener("pointermove", (ev) => {
         const q = +h.dataset.q, r = el.getBoundingClientRect();
         el.querySelectorAll(".qb").forEach((b) => b.setAttribute("opacity", +b.dataset.q === q ? 1 : 0.45));
-        tip.show(ev.clientX - r.left, ev.clientY - r.top,
-          `<div><b>${labels[q]} of paths</b></div>` +
-          `<div class="row"><span><i class="sw" style="background:var(--s1)"></i>First ${L} yrs</span><b>${pct(qFirst[q].succ)}</b></div>` +
-          `<div class="row"><span style="padding-left:15px">avg return</span><span>${pct(qFirst[q].ret)}/yr</span></div>` +
-          `<div class="row"><span><i class="sw" style="background:var(--s2)"></i>Final ${L} yrs</span><b>${pct(qLast[q].succ)}</b></div>` +
-          `<div class="row"><span style="padding-left:15px">avg return</span><span>${pct(qLast[q].ret)}/yr</span></div>`);
+        tip.show(ev.clientX - r.left, ev.clientY - r.top, `<div><b>${labels[q]} of paths</b></div>` +
+          row(sw("var(--s1)") + `First ${L} yrs`, pct(A[q].success)) + row(`<span style="padding-left:15px">avg return</span>`, pct(A[q].avg_return) + "/yr") +
+          row(sw("var(--s2)") + `Final ${L} yrs`, pct(B[q].success)) + row(`<span style="padding-left:15px">avg return</span>`, pct(B[q].avg_return) + "/yr"));
       });
       h.addEventListener("pointerleave", () => { tip.hide(); el.querySelectorAll(".qb").forEach((b) => b.setAttribute("opacity", 1)); });
     });
-  }
-
-  // ---------- summary ----------
-  function renderSummary(res) {
-    const { c, st, endSorted, failsSorted, minWSorted, cuts, below } = res, S = c.S, N = c.N;
-    $("tSucc").textContent = pct(st.p);
-    const pill = $("tPill"), tgt = Math.round(c.target * 100);
-    if (st.p >= c.target) { pill.className = "pill good"; pill.textContent = `At or above your ${tgt}% target`; }
-    else { pill.className = "pill warn"; pill.textContent = `Below your ${tgt}% target`; }
-    // Wilson interval for independent paths; pair-based normal interval for antithetic pairs.
-    const [lo, hi] = c.anti ? [Math.max(0, st.p - 1.96 * st.se), Math.min(1, st.p + 1.96 * st.se)] : wilson(st.p, N);
-    let sub = `95% CI ${pct(lo)}–${pct(hi)} (sampling error only) · SE ${pct(st.se, 2)} over ${N.toLocaleString()} paths`;
-    if (c.anti && st.naive > 0) sub += ` · antithetic SE ${st.se < st.naive ? Math.round((1 - st.se / st.naive) * 100) + "% below" : "not below"} plain MC`;
-    $("tSuccSub").textContent = sub;
-    $("tMed").textContent = money(quantileSorted(endSorted, 0.5) * S);
-    $("tP10").textContent = money(quantileSorted(endSorted, 0.1) * S);
-    if (c.rule === "guard") {
-      $("t4k").textContent = "Lowest yearly spending, median path";
-      $("t4v").textContent = pct(quantileSorted(minWSorted, 0.5) / c.rate, 0);
-      $("t4s").textContent = `of the starting ${money(c.rate * S)}/yr. In ${pct(below / N, 1)} of paths spending fell below 80% of that, which counts as a failure; ${pct(cuts / N, 0)} hit the cut guardrail at least once. 10th-percentile low point ${money(quantileSorted(minWSorted, 0.1) * S)}/yr.`;
-    } else {
-      $("t4k").textContent = "When it fails";
-      if (failsSorted.length) {
-        $("t4v").textContent = "Year " + quantileSorted(failsSorted, 0.5);
-        $("t4s").textContent = `median depletion year across the ${pct(failsSorted.length / N)} of paths that run out`;
-      } else { $("t4v").textContent = "Never"; $("t4s").textContent = "no simulated path ran out"; }
-    }
-  }
-
-  function renderInsights(res) {
-    const { c, pcts, alive, qFirst, qLast, L, variants, geo } = res, T = c.T, S = c.S;
-    const half = Math.round(T / 2);
-    $("fanInsight").textContent = `Halfway through (year ${half}), the median portfolio holds ${money(pcts[2][half] * S)} in today’s dollars and ${pct(alive[half])} of paths are still funded. ` + (pcts[0][T] > 0
-      ? `By year ${T}, 1 in 10 paths sits below ${money(pcts[0][T] * S)}.`
-      : `By year ${T}, ${pct(1 - alive[T])} of paths have run dry, which is why the bad-case ending balance is $0.`);
-    const [bad, , good] = variants;
-    const fate = (v) => v.fail ? `runs out in year ${v.fail}` : `ends with ${money(v.end * S)}`;
-    $("seqInsight").textContent = `All three lines earn the same ${pct(geo)} a year over ${T} years, taken from the simulated path with the median return. With the worst years first the portfolio ${fate(bad)}; with the best years first it ${fate(good)}.`;
-    const spreadA = qFirst[4].succ - qFirst[0].succ, spreadB = qLast[4].succ - qLast[0].succ;
     $("lgAText").textContent = `Grouped by first ${L} years`;
     $("lgBText").textContent = `Grouped by final ${L} years`;
-    $("quintInsight").textContent = `When the first ${L} years land in the worst fifth, ${pct(qFirst[0].succ, 0)} of portfolios last; in the best fifth, ${pct(qFirst[4].succ, 0)}. Ranking by the final ${L} years instead moves success by only ${Math.round(spreadB * 100)} points versus ${Math.round(spreadA * 100)}.`;
+    $("quintInsight").textContent = `When the first ${L} years land in the worst fifth, ${pct(A[0].success, 0)} of portfolios last; in the best fifth, ${pct(A[4].success, 0)}. Ranking by the final ${L} years instead moves success by only ${Math.round((B[4].success - B[0].success) * 100)} points versus ${Math.round((A[4].success - A[0].success) * 100)}.`;
   }
 
-  function renderStaticLabels(c) {
-    $("rateOut").textContent = (c.rate * 100).toFixed(1) + "%";
-    $("rateHint").textContent = `${moneyFull(c.rate * c.S)} in year one, in today’s dollars`;
-    $("yearsOut").textContent = c.T + " years";
-    $("stockOut").textContent = `${c.stock}% / ${100 - c.stock}%`;
-    $("feeOut").textContent = (c.fee * 100).toFixed(2) + "%";
-    $("ruleHint").textContent = c.rule === "guard"
-      ? "Spending flexes: cut 10% when the withdrawal rate runs 20% high, raise 10% when 20% low. Success also requires spending to stay at or above 80% of the starting amount."
-      : "Same inflation-adjusted amount every year, whatever markets do.";
-  }
-
-  // ---------- heatmap ----------
-  const H_RATES = [2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5];
-  const H_STOCKS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0];
-  let heatCache = { key: null, vals: null, nh: 0 };
-  function computeHeat(c, R) {
-    const key = R.key + "|" + c.fee + "|" + c.rule;
-    if (heatCache.key === key) return heatCache;
-    const T = c.T, nh = Math.min(c.N, 10000), guard = c.rule === "guard";
-    const vals = H_STOCKS.map((s) => H_RATES.map((r) => {
-      let ok = 0; const w = s / 100, rate = r / 100;
-      for (let i = 0; i < nh; i++) { runPath(R.Rs, R.Rb, i * T, T, w, c.fee, rate, guard, null, 0); ok += OUT.ok; }
-      return ok / nh;
-    }));
-    heatCache = { key, vals, nh };
-    return heatCache;
-  }
-  function renderHeat(c, hc) {
+  function renderHeat(g) {
     const el = $("heat");
-    let html = `<div class="hd" aria-hidden="true"></div>` + H_RATES.map((r) => `<div class="hd">${r.toFixed(1)}%</div>`).join("");
-    H_STOCKS.forEach((s, i) => {
-      html += `<div class="rl">${s}%</div>`;
-      H_RATES.forEach((r, j) => {
-        const p = hc.vals[i][j], f = Math.max(4, Math.round(p * 100));
-        const cur = Math.abs(c.rate * 100 - r) < 1e-6 && c.stock === s;
-        html += `<button type="button" class="${f >= 72 ? "hi" : ""}${cur ? " cur" : ""}" style="background:color-mix(in srgb, var(--heat) ${f}%, var(--surface))" data-r="${r}" data-s="${s}" title="${s}% stocks, ${r.toFixed(1)}% withdrawal: ${pct(p)} success" aria-label="${s}% stocks, ${r.toFixed(1)}% withdrawal, ${pct(p)} success">${Math.round(p * 100)}</button>`;
+    let html = `<div class="hd" aria-hidden="true"></div>` + g.rates.map((r) => `<div class="hd">${(r * 100).toFixed(1)}%</div>`).join("");
+    g.stocks.forEach((s, i) => {
+      html += `<div class="rl">${Math.round(s * 100)}%</div>`;
+      g.rates.forEach((r, j) => {
+        const p = g.values[i][j], f = Math.max(4, Math.round(p * 100));
+        const cur = g.current_rate !== null && Math.abs(g.current_rate - r) < 1e-9 && Math.abs(g.current_stock - s) < 1e-9;
+        html += `<button type="button" class="${f >= 72 ? "hi" : ""}${cur ? " cur" : ""}" style="background:color-mix(in srgb, var(--heat) ${f}%, var(--surface))" data-r="${r}" data-s="${s}" title="${Math.round(s * 100)}% stocks, spending ${(r * 100).toFixed(1)}% of the portfolio: ${pct(p)} success" aria-label="${Math.round(s * 100)}% stocks, spending ${(r * 100).toFixed(1)}%, ${pct(p)} success">${Math.round(p * 100)}</button>`;
       });
     });
     el.innerHTML = html;
     el.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
-      $("rate").value = b.dataset.r; $("stock").value = b.dataset.s; schedule(0);
+      const x = readInputs();
+      writeInputs({ spending: Math.round(+b.dataset.r * x.portfolio), stock_share: +b.dataset.s });
+      edited(0);
     }));
-    $("heatStatus").textContent = c.N > hc.nh ? `Cells use the first ${hc.nh.toLocaleString()} paths to stay responsive; the headline figure uses all ${c.N.toLocaleString()}.` : "";
+    $("heatCols").textContent = g.centered ? ", centered on your plan" : "";
+    $("heatStatus").textContent = `Each cell uses ${g.n_paths.toLocaleString()} paths to stay responsive.`;
   }
 
-  // ---------- orchestration ----------
-  let last = null, timer = null, heatTimer = null;
-  function run() {
-    const c = readCfg();
-    renderStaticLabels(c);
-    const R = getReturns(c);
-    const res = simulate(c, R);
-    last = res;
-    renderSummary(res); renderFan(res); renderSeq(res); renderQuint(res); renderInsights(res);
-    const alt = altSuccess(c);
-    $("tAlt").textContent = `Under ${alt.label}: ${pct(alt.p)}. Changing the assumptions moves this estimate far more than sampling error does.`;
-    clearTimeout(heatTimer);
-    const needs = heatCache.key !== R.key + "|" + c.fee + "|" + c.rule;
-    if (needs) $("heatStatus").textContent = "Updating the grid…";
-    heatTimer = setTimeout(() => renderHeat(c, computeHeat(c, R)), needs ? 30 : 0);
+  function renderTornado(s) {
+    const el = $("tornado"), F = s.factors, base = s.base;
+    const W = Math.max(320, el.clientWidth), labelW = Math.min(190, W * 0.34), rowH = 40, top = 22;
+    const H = top + F.length * rowH + 26, m = { l: labelW + 10, r: 16 };
+    const vals = F.flatMap((r) => [r.p_low, r.p_high]).concat(base);
+    let lo = Math.max(0, Math.min(...vals) - 0.04), hi = Math.min(1, Math.max(...vals) + 0.04);
+    if (hi - lo < 0.1) { const c = (hi + lo) / 2; lo = Math.max(0, c - 0.05); hi = Math.min(1, c + 0.05); }
+    const x = (p) => m.l + ((p - lo) / (hi - lo)) * (W - m.l - m.r);
+    const step = niceStep(hi - lo, 5);
+    let g = "";
+    for (let p = Math.ceil(lo / step) * step; p <= hi + 1e-9; p += step) {
+      g += `<line x1="${x(p)}" x2="${x(p)}" y1="${top - 6}" y2="${H - 22}" stroke="var(--grid)"/><text class="axis-label" x="${x(p)}" y="${H - 6}" text-anchor="middle">${Math.round(p * 100)}%</text>`;
+    }
+    let bars = "";
+    F.forEach((r, i) => {
+      const yc = top + i * rowH + rowH / 2, bh = 16;
+      bars += `<text x="0" y="${yc - 2}" font-size="13" font-weight="600" fill="var(--ink)">${r.name}</text><text class="axis-label" x="0" y="${yc + 13}">${r.note}</text>`;
+      [["low", "var(--s2)"], ["high", "var(--s1)"]].forEach(([side, col]) => {
+        const p = r["p_" + side], x0 = Math.min(x(base), x(p)), w = Math.abs(x(p) - x(base));
+        bars += `<rect x="${x0}" y="${yc - bh / 2}" width="${Math.max(w, 1)}" height="${bh}" rx="2" fill="${col}"/>`;
+        const right = p >= base, lx = right ? x(p) + 5 : x(p) - 5;
+        if (Math.abs(p - base) > 0.0005) bars += `<text x="${lx}" y="${yc + 4}" font-size="11.5" fill="var(--ink-2)" text-anchor="${right ? "start" : "end"}">${pct(p, 0)}</text>`;
+      });
+      if (Math.abs(r.p_low - base) < 0.0005 && Math.abs(r.p_high - base) < 0.0005) bars += `<text x="${x(base) + 8}" y="${yc + 4}" font-size="11.5" fill="var(--muted)">no effect on this plan</text>`;
+      bars += `<rect class="trow" data-i="${i}" x="0" y="${yc - rowH / 2}" width="${W}" height="${rowH}" fill="transparent"/>`;
+    });
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Sensitivity of the success rate to each assumption">${g}
+      <line x1="${x(base)}" x2="${x(base)}" y1="${top - 10}" y2="${H - 22}" stroke="var(--ink)" stroke-width="1.5"/>
+      <text x="${x(base)}" y="${top - 12}" font-size="11.5" font-weight="600" fill="var(--ink)" text-anchor="middle">Current plan ${pct(base)}</text>${bars}</svg>`;
+    const tip = tipFor(el);
+    el.querySelectorAll(".trow").forEach((h) => {
+      h.addEventListener("pointermove", (ev) => {
+        const r = F[+h.dataset.i], b = el.getBoundingClientRect();
+        tip.show(ev.clientX - b.left, ev.clientY - b.top, `<div><b>${r.name}</b></div>` +
+          row(sw("var(--s2)") + r.low_label, `${pct(r.p_low)} (${pts(r.p_low - base)} ± ${(1.96 * r.se_low * 100).toFixed(1)})`) +
+          row(sw("var(--s1)") + r.high_label, `${pct(r.p_high)} (${pts(r.p_high - base)} ± ${(1.96 * r.se_high * 100).toFixed(1)})`));
+      });
+      h.addEventListener("pointerleave", () => tip.hide());
+    });
+    const top1 = F[0], swing = (r) => Math.abs(r.p_high - r.p_low);
+    $("sensInsight").textContent = `${top1.name} matters most here: ${top1.low_label} gives ${pct(top1.p_low)}, ${top1.high_label} gives ${pct(top1.p_high)}, a ${Math.round(swing(top1) * 100)}-point swing.` +
+      (F.length > 1 ? ` Next is ${F[1].name.toLowerCase()} (${Math.round(swing(F[1]) * 100)} points).` : "");
+    const maxSe = Math.max(...F.flatMap((r) => [r.se_low, r.se_high]));
+    $("sensNote").textContent = [...s.notes,
+      `Two caveats: the ranking depends on the ranges chosen, and moving one input at a time ignores how they interact. Every bar uses the same ${s.n_paths.toLocaleString()} market paths and lifespans as the current plan, so each change's 95% margin of error is at most ±${(1.96 * maxSe * 100).toFixed(1)} points (hover a row).`].join(" ");
   }
-  function schedule(ms) { clearTimeout(timer); timer = setTimeout(run, ms === undefined ? 120 : ms); }
 
-  function applyPreset(k) {
-    const p = PRESETS[k]; if (!p) return;
-    $("ms").value = p.ms; $("ss").value = p.ss; $("mb").value = p.mb; $("sb").value = p.sb; $("rho").value = p.rho;
+  // ---------- comparison ----------
+  let pinned = null;   // {inputs, name}
+  function renderCompare(c) {
+    const A = c.a, B = c.b, nameA = pinned.name, nameB = currentName();
+    const fail = (r) => r.fail_age === null ? "Never" : "Age " + r.fail_age;
+    const rateTxt = (r) => r.first_year.rate === null ? "–" : pct(r.first_year.rate);
+    const rows = [
+      ["Chance of success", pct(A.success.p), pct(B.success.p), pts(c.diff.p)],
+      ["95% interval", `${pct(A.success.ci_low)}–${pct(A.success.ci_high)}`, `${pct(B.success.ci_low)}–${pct(B.success.ci_high)}`, `${pts(c.diff.ci_low)} to ${pts(c.diff.ci_high)}`],
+      ["Median left at the end", money(A.median_terminal), money(B.median_terminal), money(B.median_terminal - A.median_terminal)],
+      ["Bad case (10th percentile)", money(A.p10_terminal), money(B.p10_terminal), money(B.p10_terminal - A.p10_terminal)],
+      ["Runs short (median age)", fail(A), fail(B), ""],
+      ["Year-one withdrawal rate", rateTxt(A), rateTxt(B), ""]
+    ];
+    $("cmpTable").innerHTML = `<table class="cmp"><thead><tr><th></th><th>${sw("var(--s2)")}A: ${nameA}</th><th>${sw("var(--s1)")}B: ${nameB}</th><th>B − A</th></tr></thead><tbody>` +
+      rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join("") + "</tbody></table>";
+    const d = c.diff, same = d.se === 0 && d.p === 0;
+    const tighter = d.se > 0 ? c.independent_se / d.se : null;
+    $("cmpInsight").textContent = same ? "Plan B is identical to Plan A so far. Change something on the left to see the difference."
+      : `Plan B changes the chance of success by ${pts(d.p)} (95% CI ${pts(d.ci_low)} to ${pts(d.ci_high)}).` +
+        (d.ci_low > 0 || d.ci_high < 0 ? " The interval excludes zero, so the difference is not sampling noise." : " The interval includes zero: on these paths the plans are statistically indistinguishable.") +
+        (tighter && tighter > 1.3 ? ` Sharing paths makes this interval ${tighter.toFixed(1)}× tighter than comparing two independent runs.` : "");
+    const series = [
+      { ages: A.curves.ages, values: A.curves.funded, color: "var(--s2)", label: "A: portfolio covering plan" },
+      { ages: B.curves.ages, values: B.curves.funded, color: "var(--s1)", label: "B: portfolio covering plan" }
+    ];
+    if (A.curves.alive) series.push({ ages: A.curves.ages, values: A.curves.alive, color: "var(--s2)", label: "A: still alive", dash: true });
+    if (B.curves.alive) series.push({ ages: B.curves.ages, values: B.curves.alive, color: "var(--s1)", label: "B: still alive", dash: true });
+    $("cmpLegend").innerHTML = `<span><i class="line" style="background:var(--s2)"></i>A: portfolio still covering the plan</span><span><i class="line" style="background:var(--s1)"></i>B</span>` +
+      (A.curves.alive || B.curves.alive ? `<span><i class="dash" style="color:var(--ink-2)"></i>Still alive</span>` : "");
+    shareChart($("cmpChart"), series, null, "Share of portfolios still covering the plan, plan A versus plan B");
+    $("cmpNote").textContent = c.notes.join(" ");
   }
-  applyPreset("hist");
-  $("preset").addEventListener("change", (e) => { applyPreset(e.target.value); schedule(0); });
-  ["ms", "ss", "mb", "sb", "rho"].forEach((id) => $(id).addEventListener("input", () => { $("preset").value = "custom"; schedule(); }));
-  ["start", "rate", "years", "stock", "fee", "target", "nsim", "seed", "anti"].forEach((id) => $(id).addEventListener("input", () => schedule()));
-  document.querySelectorAll('input[name=rule], input[name=model]').forEach((r) => r.addEventListener("change", () => schedule(0)));
+  function currentName() {
+    const v = $("scenario").value, sc = presetData && presetData.scenarios.find((s) => s.id === v);
+    return sc ? sc.name : "Your plan";
+  }
+
+  // ====================================================================
+  // 5. Running simulations
+  // ====================================================================
+  // Only one request runs at a time. If inputs change mid-run, the newest
+  // inputs run next and in-between versions are skipped.
+  let presetData = null, lastRun = null, lastSens = null, lastCmp = null, lastGrid = null;
+  let busy = false, dirty = false, timer = null;
+  function edited(delay) {
+    ["verdict", "incomeCard", "fanCard", "runoutCard", "sensCard", "heatCard", "seqCard"].forEach((id) => $(id).classList.add("stale"));
+    if (pinned) $("compareCard").classList.add("stale");
+    clearTimeout(timer);
+    timer = setTimeout(() => { dirty = true; pump(); }, delay === undefined ? 150 : delay);
+  }
+  async function pump() {
+    if (busy || !dirty) return;
+    busy = true; dirty = false;
+    const inputs = readInputs();
+    try {
+      lastRun = await py("run", { inputs });
+      renderAll();
+      if (!dirty && pinned) { lastCmp = await py("compare", { a: pinned.inputs, b: inputs }); if (!dirty) { renderCompare(lastCmp); $("compareCard").classList.remove("stale"); } }
+      if (!dirty) { lastSens = await py("sensitivity", { inputs }); if (!dirty) { renderTornado(lastSens); $("sensCard").classList.remove("stale"); } }
+      if (!dirty) { lastGrid = await py("grid", { inputs }); if (!dirty) { renderHeat(lastGrid); $("heatCard").classList.remove("stale"); } }
+    } catch (err) {
+      showError("Something went wrong running the simulation: " + err.message);
+    }
+    busy = false;
+    pump();
+  }
+  function renderAll() {
+    const r = lastRun;
+    renderSummary(r); renderHints(r); renderIncome(r); renderFan(r); renderRunout(r); renderSeq(r); renderQuint(r);
+    ["verdict", "incomeCard", "fanCard", "runoutCard", "seqCard"].forEach((id) => $(id).classList.remove("stale"));
+  }
+
+  // ====================================================================
+  // 6. Wiring up the page
+  // ====================================================================
+  const MARKET_KEYS = ["stock_mean", "stock_sd", "bond_mean", "bond_sd", "correlation", "inflation"];
+  function setScenario(id) {
+    const sc = presetData.scenarios.find((s) => s.id === id); if (!sc) return;
+    writeInputs({ ...sc.inputs, ...presetData.markets[sc.inputs.market] });
+    $("scenarioHint").textContent = sc.description;
+  }
+  function markCustomScenario() {
+    if (!$("scenario").querySelector('option[value="custom"]')) $("scenario").insertAdjacentHTML("beforeend", '<option value="custom">Your own plan</option>');
+    $("scenario").value = "custom";
+    $("scenarioHint").textContent = "Edited from a scenario. Pick one again to reset.";
+  }
+  fields().forEach((el) => {
+    const isText = el.type === "number";
+    el.addEventListener(isText ? "input" : "change", () => {
+      const k = el.dataset.key;
+      if (k === "market") { if (presetData && el.value !== "custom") writeInputs(presetData.markets[el.value]); }
+      else if (MARKET_KEYS.includes(k)) $("market").value = "custom";
+      if (k !== "target" && k !== "n_paths" && k !== "seed" && k !== "antithetic") markCustomScenario();
+      updateForm();
+      edited(isText ? 450 : 0);
+    });
+    if (el.type === "range") el.addEventListener("input", () => { updateForm(); edited(150); });
+  });
+  $("scenario").addEventListener("change", (e) => { if (e.target.value !== "custom") { setScenario(e.target.value); edited(0); } });
+  $("pinBtn").addEventListener("click", () => {
+    pinned = { inputs: readInputs(), name: currentName() };
+    $("pinBtn").textContent = "Re-pin current plan as A";
+    $("clearBtn").hidden = false; $("cmpBody").hidden = false;
+    $("pinHint").textContent = `Plan A: ${pinned.name}. Now change the plan on the left.`;
+    edited(0);
+  });
+  $("clearBtn").addEventListener("click", () => {
+    pinned = null; lastCmp = null;
+    $("cmpBody").hidden = true; $("clearBtn").hidden = true; $("pinHint").textContent = "";
+    $("pinBtn").textContent = "Pin current plan as A"; $("compareCard").classList.remove("stale");
+  });
 
   let rw = 0;
   new ResizeObserver(() => {
     const w = $("fan").clientWidth;
-    if (last && Math.abs(w - rw) > 4) { rw = w; renderFan(last); renderSeq(last); renderQuint(last); }
+    if (!lastRun || Math.abs(w - rw) < 4) return;
+    rw = w; renderAll();
+    if (lastSens) renderTornado(lastSens);
+    if (lastCmp && pinned) renderCompare(lastCmp);
   }).observe(document.querySelector(".results"));
 
-  run();
-  rw = $("fan").clientWidth;
+  // Start: get defaults and scenarios from Python, then run.
+  updateForm();
+  py("presets", {}).then((p) => {
+    presetData = p;
+    $("scenario").innerHTML = p.scenarios.map((s) => `<option value="${s.id}">${s.name}</option>`).join("");
+    setScenario("classic");
+    $("pinBtn").disabled = false;
+    edited(0);
+  }, (err) => showError("Couldn't load the simulator: " + err.message));
+
+  // For the curious (and the tests): open the browser console and try
+  //   await demo.py("run", { inputs: { spending: 45000, ss_on: true } })
+  window.demo = { py, readInputs, writeInputs, setScenario, results: () => ({ run: lastRun, sensitivity: lastSens, compare: lastCmp, grid: lastGrid }), idle: () => !busy && !dirty };
 })();
 </script>
 </body>

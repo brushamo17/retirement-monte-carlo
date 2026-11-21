@@ -18,7 +18,7 @@
 - **Guardrails have a hidden cost.** Flexible spending almost never runs out of money (99.7%), but 1 in 4 retirees see spending fall below 80% of the plan along the way. Taking the cuts from discretionary spending first keeps essentials covered in **99.7%** of retirements instead of 89%, at almost no cost in lifetime discretionary spending.
 - An inflation-adjusted annuity cuts the chance of running short from 15.1% to 11.9% and raises the spending floor from 40% to 62% of the goal, at the cost of a smaller bequest.
 
-The browser demo covers the core model; the Python package adds Social Security, pensions, annuities, random lifespans, essential vs discretionary spending and the historical bootstrap. The project applies the simulation methods from Georgia Tech's ISyE 3044 to the retirement-income questions at the core of financial planning.
+The browser demo runs this same Python package in the browser (via [Pyodide](https://pyodide.org)), so it includes all of it: Social Security, pensions, annuities, random lifespans, essentials-first spending and the historical bootstrap, plus one-click scenarios, side-by-side plan comparisons and a sensitivity chart. With the default inputs it shows the same 89.4% as below. The project applies the simulation methods from Georgia Tech's ISyE 3044 to the retirement-income questions at the core of financial planning.
 
 ---
 
@@ -33,7 +33,7 @@ pip install -r requirements.txt
 
 python run_example.py              # prints the results below, saves the charts to figures/
 python research.py                 # robustness experiments (about a minute)
-pytest -q                          # 43 tests
+pytest -q                          # 72 tests
 ```
 
 Minimal use:
@@ -82,7 +82,7 @@ All figures come from `python run_example.py` (10,000 paths, seed 3044, lognorma
 | Historical block bootstrap | 90.0% |
 | Guardrails spending rule | 75.2%: never ran out in 99.6% of paths, but spending fell below 80% of the plan in 24.7% |
 
-The browser version, written separately in JavaScript with a different random number generator, gets 89.0% for the same inputs, within sampling error of 89.4%. Agreement like this catches many kinds of bugs, such as a wrong formula or an off-by-one year, but it can't prove there are none: both versions share the same design and assumptions.
+The browser demo runs this same code, and an automated browser test checks on every push that it reproduces Python's numbers for the same inputs and seed (see [The browser demo](#the-browser-demo)).
 
 ![Fan chart](figures/fan_chart.png)
 
@@ -316,10 +316,16 @@ retirement_mc/
   analysis.py     success grid and scenario comparisons (CRN), paired differences,
                   sequence-risk quintiles, reorder demo, historical backtest
   plots.py        matplotlib charts
+  web.py          bridge for the browser demo: JSON inputs in, chart data out
 run_example.py    reproduces the Results section
 research.py       reproduces the Robustness section
-tests/            43 pytest checks
-docs/index.html   the browser version (served by GitHub Pages)
+scripts/
+  build_web.py    bundles retirement_mc/ into docs/retirement_mc.zip for the demo
+tests/            72 pytest checks, plus browser tests in tests/browser/
+docs/
+  index.html      the browser demo (served by GitHub Pages): form, charts, no finance math
+  pyodide-worker.js  runs Python in a background thread
+  retirement_mc.zip  the package, bundled for the browser
 ```
 
 **Why loop over years but not over paths?** Each year depends on the previous year's balance, so time is sequential. Paths are independent of each other, so NumPy processes all of them at once with array operations. The full example runs in about 3 seconds.
@@ -336,6 +342,38 @@ docs/index.html   the browser version (served by GitHub Pages)
 - Surplus income is reinvested or spent as configured.
 - The Wilson interval stays honest at 0% and 100% and matches the textbook interval near the middle.
 - Comparisons respect each plan's own mortality, and the CRN grid is monotone.
+- The demo's bridge reproduces the README numbers exactly, comparing a plan with itself gives exactly zero, and every sensitivity bar moves in the right direction.
+
+### The browser demo
+
+The demo has no finance code of its own. `docs/index.html` collects the form into a dict and calls `retirement_mc/web.py`, which runs inside the browser on [Pyodide](https://pyodide.org) (CPython compiled to WebAssembly). The JavaScript only reads inputs and draws charts, so a new feature means changing Python and adding an input box.
+
+```
+browser form ──JSON──> pyodide-worker.js ──> retirement_mc.web.call("run", ...) ──JSON──> charts
+```
+
+Python runs in a Web Worker so the page stays responsive, and the first visit downloads about 10 MB (Python and NumPy), which the browser then caches. GitHub Pages only serves `docs/`, so `scripts/build_web.py` zips the package into `docs/retirement_mc.zip`.
+
+**After changing anything in `retirement_mc/`**, rebuild the bundle (a test fails if you forget):
+
+```bash
+python scripts/build_web.py
+```
+
+**Browser tests** (`tests/browser/`) drive the real page in Chromium with Playwright. CI runs them on every push with Pyodide loaded from the CDN, exactly as visitors get it, and checks that the browser's results match ordinary Python for the same inputs and seed: success rates, percentiles, sensitivity bars and comparisons. They're opt-in locally:
+
+```bash
+pip install playwright && playwright install chromium
+BROWSER_TESTS=1 pytest tests/browser -q            # Windows PowerShell: $env:BROWSER_TESTS=1; pytest tests/browser -q
+```
+
+With `BROWSER_BACKEND=cpython` the tests swap Pyodide for a local Python server, which tests the page itself without downloading anything.
+
+To try the page locally, serve the folder (opening the file directly won't work, because browsers block workers on `file://`):
+
+```bash
+python -m http.server -d docs 8000                  # then open http://localhost:8000
+```
 
 ---
 
@@ -373,6 +411,6 @@ Design priorities:
 
 - **Headline probabilities come with a confidence interval.** A simulated success rate is an estimate, not a fact, and the interval shows how much to trust it.
 - **Success rate isn't the only measure.** A yes/no success rate undervalues guarantees like annuities, which make bad outcomes less severe. So the results also report the spending floor when money runs short and the amount left at death.
-- **Anyone can try it.** A browser version of the core model is hosted on GitHub Pages, so it runs without installing Python.
+- **Anyone can try it.** The full Python model runs in the browser on GitHub Pages, so it works without installing anything, and a CI test keeps the browser and Python results identical.
 
 I developed this with Claude (Anthropic) as an AI coding assistant. Questions and feedback are welcome: kai606@gmail.com.
