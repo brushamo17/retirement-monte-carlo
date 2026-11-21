@@ -19,3 +19,26 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -r requirements.txt
       - run: pytest -q
+
+  browser:
+    # Opens the live demo page in a real browser, with Pyodide and NumPy loaded
+    # from the CDN exactly as visitors get them, and checks that the browser's
+    # numbers match the Python package for the same inputs and seed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt playwright
+      - run: playwright install --with-deps chromium
+      - run: pytest tests/browser -q
+        env:
+          BROWSER_TESTS: "1"
+          SCREENSHOT_DIR: screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-screenshots
+          path: screenshots
+          if-no-files-found: ignore
